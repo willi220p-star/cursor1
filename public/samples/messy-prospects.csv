@@ -1,0 +1,11 @@
+First Name,Company,email,Website Screenshot,LinkedIn Photo,  title  ,empty_col
+Dilip,DGK Business Consultancy,dilip@example.com,https://images.example/dilip-site.png,https://images.example/dilip.jpg,Managing Director,
+Sarah,Acme Mining NT,sarah@acme.com,,,Operations Manager,unused
+,,missing@empty.com,https://images.example/broken.png,,Coordinator,
+Jordan Lee,Northline Logistics,jordan@northline.au,https://images.example/northline.png,https://images.example/jordan.jpg,Head of Growth,
+Priya,Sunrise Clinics,,https://this-host-does-not-exist.invalid/shot.png,https://this-host-does-not-exist.invalid/photo.jpg,Practice Owner,
+Tom Nguyen,Harbour Legal,tom@harbourlegal.com.au,,,Special Counsel,
+Amina Yusuf,Top End Solar,amina@topendsolar.com,https://images.example/solar.png,,Founder,
+,Blank Company Pty Ltd,ops@blankco.test,,,,
+Chris,Kakadu Tours,chris@kakadutours.com,https://images.example/kakadu.png,https://images.example/chris.jpg,Guest Experience Lead,
+Mei Chen,Darwin Fibre Co,mei@darwinfibre.co,https://images.example/fibre.png,https://images.example/mei.jpg,CMO,

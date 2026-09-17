@@ -1,0 +1,1 @@
+- [GitHub publication via connectors](github-publication-connectors.md) — Git provider connections may not authenticate CLI Git; use the standard GitHub connector API with throttling.
