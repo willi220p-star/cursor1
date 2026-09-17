@@ -1,5 +1,7 @@
 # DGK GTM Personalisation
 
+Built by **Sushant**.
+
 Internal operator tool for DGK Business Consultancy in Darwin, Australia. The team uploads a prospect spreadsheet and generates one personalised image per row — a handwritten note or a meme — then hosts the files on Supabase Storage and writes permanent URLs back to Airtable for Clay and Smartlead.
 
 This is not a public product. There is no signup. Accounts are created in the Supabase dashboard.
@@ -55,3 +57,7 @@ Interface type is Inter (400–700). Headings 32px and above use negative letter
 ## Stack
 
 Vite, React, TypeScript, React Router, Tailwind CSS, Supabase Auth. Canvas, spreadsheet parsing, and GIF encoding are added in later phases and lazy-loaded.
+
+## Maintainer
+
+Sushant
