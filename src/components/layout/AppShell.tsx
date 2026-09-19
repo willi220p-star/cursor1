@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { useAuth } from '@/hooks/use-auth'
 import { BRAND } from '@/lib/brand'
 import { cn } from '@/lib/utils'
+import { supabaseConfigured } from '@/services/supabase/client'
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -56,11 +57,13 @@ export function AppShell() {
 
           <div className="flex items-center gap-3">
             <p className="hidden max-w-[180px] truncate text-xs text-stone-gray sm:block">
-              {user?.email}
+              {supabaseConfigured ? user?.email : 'Guest'}
             </p>
-            <Button variant="secondary" size="sm" onClick={() => void handleSignOut()}>
-              Sign out
-            </Button>
+            {supabaseConfigured ? (
+              <Button variant="secondary" size="sm" onClick={() => void handleSignOut()}>
+                Sign out
+              </Button>
+            ) : null}
           </div>
         </div>
 

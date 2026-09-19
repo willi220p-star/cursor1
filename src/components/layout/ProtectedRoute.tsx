@@ -1,5 +1,6 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { supabaseConfigured } from '@/services/supabase/client'
 
 export function ProtectedRoute() {
   const { session, loading, error } = useAuth()
@@ -10,6 +11,10 @@ export function ProtectedRoute() {
         <p className="text-sm text-stone-gray">Checking your session…</p>
       </div>
     )
+  }
+
+  if (!supabaseConfigured) {
+    return <Outlet />
   }
 
   if (error && !session) {

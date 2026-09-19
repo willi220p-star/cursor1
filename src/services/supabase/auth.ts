@@ -9,7 +9,7 @@ export async function getCurrentSession(): Promise<{
   error: string | null
 }> {
   if (!supabaseConfigured || !supabase) {
-    return { data: null, error: missingConfig }
+    return { data: null, error: null }
   }
   const { data, error } = await supabase.auth.getSession()
   if (error) {
@@ -34,7 +34,7 @@ export async function signInWithEmail(
 
 export async function signOut(): Promise<{ error: string | null }> {
   if (!supabaseConfigured || !supabase) {
-    return { error: missingConfig }
+    return { error: null }
   }
   const { error } = await supabase.auth.signOut()
   return { error: error ? error.message : null }
