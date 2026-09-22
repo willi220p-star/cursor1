@@ -84,7 +84,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     paperColor: paperKind === 'white-paper' ? '#ffffff' : '#f7f0e1',
     paperColorPreset: paperKind === 'white-paper' ? 'white' : 'cream',
     paperKind,
-    fontFamily: mode === 'avatar' ? 'Space Grotesk' : 'Homemade Apple',
+    fontFamily: mode === 'avatar' ? 'Space Grotesk' : handwriting ? 'Caveat' : 'Homemade Apple',
     postscript: '',
     lineSpacing: mode === 'avatar' ? 1.45 : 1.35,
     letterSpacing: 0,

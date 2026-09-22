@@ -368,12 +368,13 @@ export function migrateDeskSurface(value: string | undefined): DeskSurface {
 
 /**
  * The fourteen notes writing styles, in slot order.
+ * Deepali and Muskan use open pen faces matched to the sample notes.
  * Indie Flower ships with the studio. The other faces are licensed to their
  * authors, so each slot uses a font file the operator already has.
  */
 export const noteWritingStyles = [
-  { id: 'handwriting-1', label: 'Deepali Font', source: 'Calligraphr custom', sample: 'Hello there', size: 22 },
-  { id: 'handwriting-2', label: 'Myfont Muskan', source: 'Calligraphr custom', sample: 'Hello there', size: 22 },
+  { id: 'handwriting-1', label: 'Deepali Font', source: 'Pen sample', font: 'Caveat', sample: 'Hi {name|there},', size: 24 },
+  { id: 'handwriting-2', label: 'Myfont Muskan', source: 'Pen sample', font: 'Nanum Pen Script', sample: 'Hi {name|there},', size: 26 },
   { id: 'handwriting-3', label: 'QEJulianDean', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
   { id: 'handwriting-4', label: 'QESamRoberts2', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
   { id: 'handwriting-5', label: 'QEPrintVersion', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
@@ -406,6 +407,7 @@ export const handwritingFonts = [
   'Shadows Into Light',
   'Patrick Hand',
   'Indie Flower',
+  'Nanum Pen Script',
 ] as const;
 
 export type StudioConfig = {

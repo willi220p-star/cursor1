@@ -2066,7 +2066,7 @@ export function StudioGenerator({
                 })}
               </RadioGroup>
             </FieldRow>
-            <FieldRow id="handwriting-style" label="Writing style" hint="Fourteen hands from your list. Indie Flower is ready. The other faces use the font file you are licensed to use.">
+            <FieldRow id="handwriting-style" label="Writing style" hint="Deepali and Muskan match the pen samples. Indie Flower is built in. The other faces use a font file you are licensed to use.">
               <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
                 {noteWritingStyles.map((style, index) => {
                   const family = writingStyleFamily(style);
