@@ -49,6 +49,7 @@ import { consumeSampleListRequest, loadSampleList, recordExport } from '@/studio
 import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
 import { loadArtefactFonts } from '@/studio/fonts';
+import { installNoteFonts, readNoteFonts, saveNoteFont, type StoredNoteFont } from '@/studio/note-fonts';
 import { unresolvedTags, safeFilename, renderMerge } from '@/studio/merge';
 import {
   canvasToBlob,
@@ -104,7 +105,8 @@ import {
   guessColumn,
   handwritingFonts,
   handwritingKinds,
-  sheetHandwritingStyles,
+  noteWritingStyles,
+  writingStyleFamily,
   memeMotions,
   messageColumnAliases,
   modeHref,
@@ -321,6 +323,7 @@ export function StudioGenerator({
   const [announcement, setAnnouncement] = useState('');
   const [reviewOpen, setReviewOpen] = useState(false);
   const [signOpen, setSignOpen] = useState(false);
+  const [noteFonts, setNoteFonts] = useState<Record<string, StoredNoteFont>>({});
   const desktop = useMediaQuery('(min-width: 1024px)');
   const cancelRef = useRef(false);
   const previewCanvas = useRef<HTMLCanvasElement>(null);
@@ -349,6 +352,13 @@ export function StudioGenerator({
   useEffect(() => {
     void loadArtefactFonts();
   }, []);
+
+  useEffect(() => {
+    if (mode !== 'handwritten' && mode !== 'handgif') return;
+    const stored = readNoteFonts();
+    setNoteFonts(stored);
+    void installNoteFonts(stored);
+  }, [mode]);
 
   useEffect(() => {
     const canvas = previewCanvas.current;
@@ -2056,22 +2066,55 @@ export function StudioGenerator({
                 })}
               </RadioGroup>
             </FieldRow>
-            <FieldRow id="handwriting-style" label="Writing style" hint="Nine handwriting looks. The note uses the one you pick.">
+            <FieldRow id="handwriting-style" label="Writing style" hint="Fourteen hands from your list. Indie Flower is ready. The other faces use the font file you are licensed to use.">
               <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
-                {sheetHandwritingStyles.map((style) => {
-                  const active = config.fontFamily === style.font && !config.customFontDataUrl;
+                {noteWritingStyles.map((style, index) => {
+                  const family = writingStyleFamily(style);
+                  const bundled = 'font' in style;
+                  const stored = noteFonts[family];
+                  const ready = bundled || Boolean(stored);
+                  const active = config.fontFamily === family && (bundled ? !config.customFontDataUrl : config.customFontDataUrl === stored?.dataUrl);
+                  const slot = `Handwriting ${index + 1}`;
                   return (
-                    <button
-                      type="button"
-                      key={style.font}
-                      role="option"
-                      aria-selected={active}
-                      className={`writing-style ${active ? 'is-active' : ''}`}
-                      onClick={() => setConfig((current) => ({ ...current, fontFamily: style.font, customFontDataUrl: undefined }))}
-                    >
-                      <span className="writing-style-sample" style={{ fontFamily: `"${style.font}", cursive`, fontSize: style.size }}>{style.sample}</span>
-                      <span className="writing-style-name">{style.label}</span>
-                    </button>
+                    <div key={style.id} className={`writing-style ${active ? 'is-active' : ''} ${ready ? '' : 'is-waiting'}`} role="option" aria-selected={active}>
+                      <button
+                        type="button"
+                        className="writing-style-pick"
+                        disabled={!ready}
+                        onClick={() => setConfig((current) => ({
+                          ...current,
+                          fontFamily: family,
+                          customFontDataUrl: bundled ? undefined : stored?.dataUrl,
+                        }))}
+                      >
+                        <span className="writing-style-sample" style={ready ? { fontFamily: `"${family}", cursive`, fontSize: style.size } : undefined}>
+                          {ready ? style.sample : slot}
+                        </span>
+                        <span className="writing-style-name">{style.label}</span>
+                      </button>
+                      {!ready && (
+                        <label className="writing-style-add">
+                          Add font file
+                          <input
+                            type="file"
+                            accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                            className="sr-only"
+                            onChange={(event) => {
+                              const file = event.target.files?.[0];
+                              event.target.value = '';
+                              if (!file) return;
+                              void saveNoteFont(family, file).then((dataUrl) => {
+                                setNoteFonts(readNoteFonts());
+                                setConfig((current) => ({ ...current, fontFamily: family, customFontDataUrl: dataUrl }));
+                                toast.success(`${style.label} is now a writing style`);
+                              }).catch(() => {
+                                setError(`${file.name} could not be used as ${style.label}. Use a TTF, OTF, WOFF, or WOFF2 file.`);
+                              });
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
                   );
                 })}
               </div>

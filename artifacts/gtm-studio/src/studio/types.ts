@@ -366,21 +366,35 @@ export function migrateDeskSurface(value: string | undefined): DeskSurface {
   return 'pine';
 }
 
-/** Nine looks from the handwriting sheet, in the same order as the sample page. */
-export const sheetHandwritingStyles = [
-  { font: 'Satisfy', label: 'Dearest friend', sample: 'To my dearest friend', size: 22 },
-  { font: 'Rock Salt', label: 'Quick scrawl', sample: 'I hope this letter', size: 18 },
-  { font: 'Architects Daughter', label: 'Dear diary', sample: 'Dear diary,', size: 20 },
-  { font: 'Caveat Brush', label: 'Brush note', sample: 'Just wanted to drop', size: 22 },
-  { font: 'Great Vibes', label: 'Warm script', sample: 'With love and warm', size: 28 },
-  { font: 'Cedarville Cursive', label: 'Everyday cursive', sample: 'Thinking of you and', size: 22 },
-  { font: 'Permanent Marker', label: 'Quick caps', sample: 'HEY! JUST A QUICK', size: 15 },
-  { font: 'Gloria Hallelujah', label: 'Loose print', sample: "Can't wait to see", size: 18 },
-  { font: 'La Belle Aurore', label: 'Small cursive', sample: 'Sending you all my best', size: 24 },
+/**
+ * The fourteen notes writing styles, in slot order.
+ * Indie Flower ships with the studio. The other faces are licensed to their
+ * authors, so each slot uses a font file the operator already has.
+ */
+export const noteWritingStyles = [
+  { id: 'handwriting-1', label: 'Deepali Font', source: 'Calligraphr custom', sample: 'Hello there', size: 22 },
+  { id: 'handwriting-2', label: 'Myfont Muskan', source: 'Calligraphr custom', sample: 'Hello there', size: 22 },
+  { id: 'handwriting-3', label: 'QEJulianDean', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-4', label: 'QESamRoberts2', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-5', label: 'QEPrintVersion', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-6', label: 'QEAntonyLark', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-7', label: 'QESamRoberts2', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-8', label: 'QETonyFlores', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-9', label: 'QEBradenHill', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-10', label: 'QECarolineMutiboko', source: 'Quantum Enterprises', sample: 'Hello there', size: 18 },
+  { id: 'handwriting-11', label: 'PAW-HandFont', source: 'HandFont', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-12', label: 'QEGHHughes', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-13', label: 'Indie Flower', source: 'Kimberly Geswein', font: 'Indie Flower', sample: 'Hello there', size: 20 },
+  { id: 'handwriting-14', label: 'Children Handwritten', source: 'Darwinoo', sample: 'Hello there', size: 22 },
 ] as const;
 
+export type NoteWritingStyle = (typeof noteWritingStyles)[number];
+
+export function writingStyleFamily(style: NoteWritingStyle) {
+  return 'font' in style ? style.font : style.label;
+}
+
 export const handwritingFonts = [
-  ...sheetHandwritingStyles.map((style) => style.font),
   'Homemade Apple',
   'Covered By Your Grace',
   'Caveat',
