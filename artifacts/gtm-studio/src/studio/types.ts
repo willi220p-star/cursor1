@@ -366,49 +366,35 @@ export function migrateDeskSurface(value: string | undefined): DeskSurface {
   return 'pine';
 }
 
-/**
- * The fourteen notes writing styles, in slot order.
- * Deepali and Muskan use open pen faces matched to the sample notes.
- * Indie Flower ships with the studio. The other faces are licensed to their
- * authors, so each slot uses a font file the operator already has.
- */
+/** Notes writing styles. Each face is an open pen matched to the sample notes. */
 export const noteWritingStyles = [
-  { id: 'handwriting-1', label: 'Deepali Font', source: 'Pen sample', font: 'Caveat', sample: 'Hi {name|there},', size: 24 },
-  { id: 'handwriting-2', label: 'Myfont Muskan', source: 'Pen sample', font: 'Nanum Pen Script', sample: 'Hi {name|there},', size: 26 },
-  { id: 'handwriting-3', label: 'QEJulianDean', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-4', label: 'QESamRoberts2', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-5', label: 'QEPrintVersion', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-6', label: 'QEAntonyLark', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-7', label: 'QESamRoberts2', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-8', label: 'QETonyFlores', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-9', label: 'QEBradenHill', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-10', label: 'QECarolineMutiboko', source: 'Quantum Enterprises', sample: 'Hello there', size: 18 },
-  { id: 'handwriting-11', label: 'PAW-HandFont', source: 'HandFont', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-12', label: 'QEGHHughes', source: 'Quantum Enterprises', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-13', label: 'Indie Flower', source: 'Kimberly Geswein', font: 'Indie Flower', sample: 'Hello there', size: 20 },
-  { id: 'handwriting-14', label: 'Children Handwritten', source: 'Darwinoo', sample: 'Hello there', size: 22 },
+  { id: 'handwriting-1', label: 'Handwriting 1', font: 'Caveat', sample: 'Hi {name|there},', size: 24 },
+  { id: 'handwriting-2', label: 'Handwriting 2', font: 'Nanum Pen Script', sample: 'Hi {name|there},', size: 26 },
+  { id: 'handwriting-3', label: 'Handwriting 3', font: 'Handlee', sample: 'Hi {name|there},', size: 22 },
+  { id: 'handwriting-4', label: 'Handwriting 4', font: 'Cedarville Cursive', sample: 'Hi {name|there},', size: 24 },
+  { id: 'handwriting-5', label: 'Handwriting 5', font: 'Patrick Hand', sample: 'Hi {name|there},', size: 22 },
+  { id: 'handwriting-6', label: 'Handwriting 6', font: 'Shadows Into Light', sample: 'Hi {name|there},', size: 22 },
+  { id: 'handwriting-7', label: 'Handwriting 7', font: 'Gloria Hallelujah', sample: 'Hi {name|there},', size: 18 },
 ] as const;
 
 export type NoteWritingStyle = (typeof noteWritingStyles)[number];
 
-export function writingStyleFamily(style: NoteWritingStyle) {
-  return 'font' in style ? style.font : style.label;
-}
+export const handwritingFonts = noteWritingStyles.map((style) => style.font);
 
-export const handwritingFonts = [
+const retiredHandwritingFonts = [
   'Homemade Apple',
   'Covered By Your Grace',
-  'Caveat',
   'Reenie Beanie',
   'Sacramento',
   'Dancing Script',
   'Kalam',
   'Gochi Hand',
-  'Shadows Into Light',
-  'Patrick Hand',
   'Indie Flower',
-  'Nanum Pen Script',
 ] as const;
+
+export function isHandwritingFamily(font: string) {
+  return (handwritingFonts as readonly string[]).includes(font) || (retiredHandwritingFonts as readonly string[]).includes(font);
+}
 
 export type StudioConfig = {
   id?: string;

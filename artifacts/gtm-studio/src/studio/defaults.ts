@@ -3,7 +3,7 @@ import {
   avatarInNoteLayout,
   defaultCrop,
   finishPaperZone,
-  handwritingFonts,
+  isHandwritingFamily,
   migrateDeskSurface,
   migrateWritingHand,
   migrateWritingSpeed,
@@ -127,7 +127,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
 
 export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
   const defaults = defaultConfig(mode);
-  const fontFamily = mode === 'avatar' && (handwritingFonts as readonly string[]).includes(value.fontFamily)
+  const fontFamily = mode === 'avatar' && isHandwritingFamily(value.fontFamily)
     ? 'Space Grotesk'
     : (value.fontFamily ?? defaults.fontFamily);
   const layout = mode === 'avatar'

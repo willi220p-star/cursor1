@@ -6,7 +6,8 @@ import { handwritingFonts, typedFonts } from './types';
  */
 const artefactFamilies = [
   'Anton',
-  ...handwritingFonts.map((font) => (font === 'Caveat' || font === 'Dancing Script' ? `${font}:wght@400..700` : font === 'Kalam' ? 'Kalam:wght@400;700' : font)),
+  'Dancing Script:wght@400..700',
+  ...handwritingFonts.map((font) => (font === 'Caveat' ? `${font}:wght@400..700` : font)),
   ...typedFonts.filter((font) => font !== 'Manrope').map((font) => `${font}:wght@500;600;700`),
 ];
 

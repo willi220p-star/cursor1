@@ -61,7 +61,7 @@ Upgrade later only if you outgrow free auth or storage quotas.
 - **Carousel generator** is a separate last studio (`/carousel`). It is the full [FranciscoMoretti carousel-generator](https://github.com/FranciscoMoretti/carousel-generator) program — slides, brand, theme, fonts, File import/export, PDF download, optional OpenAI key (gear icon). It is not mixed into handwritten, avatar, memes, GIF, or handwriting GIF, and it does not use the prospect CSV generate pipeline.
 - Meme and GIF text boxes have Canva-like style: highlight words, typing / glow / highlight / pop on each layer.
 - Optional drawn signature (one-click pad) plus a signature file upload.
-- Notes writing styles follow the fourteen-slot list. Deepali Font and Myfont Muskan match the pen samples and are ready to use, along with Indie Flower. The other faces use a font file you are licensed to use, added on that style.
+- Notes writing styles are Handwriting 1 through 7, matched to the pen samples. The older handwriting list is not shown in Notes.
 - Crop (zoom + pan) on notes, memes, GIFs, and avatars. Drag the note and avatar frames to size them.
 - Handwritten notes on A4: notebook, white paper, or diary; paper colours (white, cream, watercolour, custom); real desk woods (pine, oak, walnut, maple, mahogany, or a custom colour / photo); finishes (desk, flat lay, scanned, clean)
 - Paper background: put linen, kraft, grid, or your own photo on the sheet, then remove it

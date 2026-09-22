@@ -589,27 +589,6 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
   background: #f7f0e1;
   color: #173765;
   text-align: left;
-}
-.writing-style.is-waiting { background: var(--card); color: var(--foreground); }
-.writing-style-pick {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.writing-style-pick:disabled { cursor: default; }
-.writing-style-add {
-  font-family: var(--font-sans, inherit);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--primary);
   cursor: pointer;
 }
 .writing-style-sample {
