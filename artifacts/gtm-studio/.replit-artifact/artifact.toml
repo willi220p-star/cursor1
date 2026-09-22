@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "GTM Studio"
+description = "An internal DGK Business Consultancy workspace for turning prospect spreadsheets into personalised handwritten notes and outreach memes, with bulk export, storage, Airtable sync, presets, and animated GIF workflows."
+version = "1.0.0"
+id = "artifacts/gtm-studio"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 18177
+
+[services.development]
+run = "pnpm --filter @workspace/gtm-studio run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/gtm-studio", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/gtm-studio/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "18177"
+BASE_PATH = "/"

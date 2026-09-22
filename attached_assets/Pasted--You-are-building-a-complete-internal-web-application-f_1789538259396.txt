@@ -1,0 +1,200 @@
+```
+You are building a complete internal web application for DGK Business Consultancy, a B2B growth consultancy based in Darwin, Australia. Build this from scratch in Lovable as a single cohesive product.
+
+This is an internal tool, not a public product. Only DGK team members log in. There is no public signup, no marketing page, no pricing page.
+
+<what_you_are_building>
+A GTM personalisation tool that turns a spreadsheet of prospects into a folder of personalised images — one per prospect — for use in cold email and LinkedIn outreach campaigns.
+
+The operator uploads a CSV of prospects. For every row the tool generates a personalised image: either a handwritten note or a meme, with the prospect's name, company, website screenshot and LinkedIn photo merged into the design. Those images upload to Supabase Storage as permanent public URLs, sync to Airtable as the review layer, and get consumed downstream by Clay and Smartlead as personalisation variables inside live cold email sequences.
+
+The reason this matters: a generic cold email gets ignored. An email containing an image of the prospect's own website inside a meme, or a handwritten note addressed to them by name, gets a reply. This tool makes that possible at four hundred contacts at a time instead of one at a time.
+</what_you_are_building>
+
+<use_supabase>
+Connect Supabase using Lovable's native Supabase integration. You will need it for four things: authentication, image storage, saved campaign presets, and custom meme template storage.
+
+Set up email and password authentication with no public signup — accounts get created manually in the Supabase dashboard by an admin. Every route except the login page requires an authenticated session, and unauthenticated visitors redirect to login.
+
+Create a public storage bucket named gtm-images for generated output, and a second bucket named custom-templates for operator-uploaded meme templates.
+
+Create a presets table storing named campaign configurations, and a custom_templates table storing uploaded template metadata including their defined text zone coordinates. Apply row level security so operators only see their own presets and templates.
+</use_supabase>
+
+<brand>
+This must look like a DGK product, not a generic dashboard. Override the shadcn defaults with the DGK brand system.
+
+Load Inter from Google Fonts at weights 400, 500, 600 and 700, and use it for every piece of interface text. Apply negative letter spacing to every heading 32 pixels and above — this is the single most recognisable element of the DGK look and it is not optional.
+
+Set the colour tokens in Tailwind as follows. Primary text is #0d1117, a deep navy ink. Page backgrounds alternate between #ffffff and a warm cream #f9f8f6. Every primary action and call to action uses #3859f9, a saturated violet. Borders and dividers use #dad4c8, a warm sand tone — never a cool grey. Secondary text is #55534e, and placeholder text is #9f9b93. Input backgrounds and hover states use #e6e8ec. Icon accents and success states use #0ec5b0, a bright teal.
+
+Buttons are fully pill-shaped with a border radius of 1584px, never a smaller rounded rectangle. Primary buttons are violet with white text. Secondary buttons are white with navy text and a sand border.
+
+Cards carry a one pixel sand border, twelve pixel radius, and a very subtle shadow — rgba(13,17,23,0.10) 0px 1px 1px 0px. Nothing heavier.
+
+Space everything on an eight pixel grid. Sections sit sixty four pixels apart, cards carry twenty four pixels of internal padding, and elements inside a card sit sixteen pixels apart. Cap the page at 1200 pixels wide and constrain body copy to roughly sixty five characters per line.
+
+The vivid violet and teal appear on actions and accents only. Never use them as large background fills.
+</brand>
+
+<application_structure>
+The login page at /login handles authentication.
+
+The dashboard at / shows recent campaigns, saved presets, storage usage against the Supabase one gigabyte limit, and prominent entry points into both generator modes.
+
+The handwritten note generator lives at /handwritten.
+
+The meme generator lives at /memes.
+
+A persistent sticky header carries the DGK wordmark, navigation between both modes, and the signed-in user with a sign out action.
+</application_structure>
+
+<phase_one_foundation>
+Build the project shell first and get it working before anything else.
+
+Set up routing for all four routes. Connect Supabase and implement email and password authentication with a protected route wrapper. Build the login page, the sticky header, and the dashboard shell. Apply the complete DGK brand system to every surface including the shadcn component overrides.
+
+Verify that signing in works, that signing out works, and that visiting a protected route while signed out redirects to login. Do not move on until this runs.
+</phase_one_foundation>
+
+<phase_two_data_layer>
+Build the spreadsheet import and the merge tag engine. Everything downstream depends on this being correct.
+
+Create a drag and drop upload zone accepting CSV, XLSX, XLS and ODS files. Parse CSV with PapaParse and spreadsheets with SheetJS. After a successful upload, detect every column header and render them as clickable chips in a panel beside the editor. Clicking a chip inserts that merge tag at the operator's cursor position in whichever text field currently has focus. Show a badge confirming the row count.
+
+The merge tag engine supports four syntaxes, because real outbound lists are messy:
+
+A plain tag written as {company} resolves to that cell's value.
+
+A fallback tag written as {name|there} resolves to the word "there" when the cell is empty, which prevents an email opening with a blank space where a name should be.
+
+The special tag {row} outputs the row number, used in file naming patterns.
+
+Spintax written as {Hi|Hey|Hello} randomly picks one option per row, creating natural variation across a large send so four hundred images do not form a detectable identical pattern.
+
+Resolve all four live in the preview. When a tag references a column that does not exist in the uploaded file, render it in red in the preview so the operator catches the mistake before generating hundreds of broken images.
+
+Test this against a deliberately messy file containing empty cells, inconsistent header casing, and columns with spaces in their names.
+</phase_two_data_layer>
+
+<phase_three_handwritten_generator>
+Build the handwritten note page using Fabric.js for canvas control.
+
+Head the page "Handwritten Note Generator" with the subheading "One personalised handwritten note per contact, built for cold email and LinkedIn."
+
+Provide six handwriting style templates, each pairing a handwriting font with matching paper: casual cursive on lined paper, neat print on a blank cream card, rushed scrawl on kraft paper, bold marker on a white card, fine pen on ruled notebook paper, and a post-it note on a yellow square. Let the operator upload their own background image — their letterhead or branded note paper — in any common image format.
+
+Build a multi-line text editor supporting every merge tag syntax, with a font size slider running from eighteen to fifty two pixels, a line spacing control, and a pen colour selector offering black, dark blue, dark red and dark green to simulate real ink. Make the text block draggable so the operator positions it naturally rather than being locked into a fixed zone.
+
+Add a separate optional postscript zone below the main body with its own size and position controls. Postscripts carry disproportionate weight in cold outreach because they get read even when the body does not.
+
+Build a signature zone at the bottom. The operator types their name and it renders in a cursive font — load both Caveat and Dancing Script from Google Fonts and let them choose. Alternatively they can upload a transparent PNG of a real signature, which reads as far more genuine.
+
+Show a live preview of row one with arrows to step through any row, updating in real time as settings change. Below the preview, display which row is rendering and what values fed it.
+
+Add a channel variant toggle. The LinkedIn variant renders at 1080 by 1080 square with larger type and less text, sized for DM attachments and connection requests. The email variant renders at 1200 by 628 landscape at standard density, sized for embedding in an email body. The operator sets a default and can override per row.
+</phase_three_handwritten_generator>
+
+<phase_four_meme_generator>
+Build the meme page. Head it "Outreach Meme Generator" with the subheading "Personalised memes, one per contact. Pattern interrupts get replies."
+
+Provide eight built-in templates chosen for B2B sales relevance: a two panel approve and disapprove layout for old way versus new way positioning, a two button decision layout for creating tension between options, an expanding escalation layout for levels of awareness, a status quo pain layout, a distracted comparison layout for contrasting solutions, a bold claim debate layout for challenger positioning, a misidentification layout for labelling a pain point against a job title, and a celebration layout for a warm tone.
+
+Source all built-in template imagery from CC0 or public domain sources, or generate them as original illustrated compositions. Do not use copyrighted meme images, character art, film or television stills, or any licensed media. This is a commercial tool and these templates ship inside client campaigns.
+
+Custom template upload is a core feature, not an afterthought. The operator uploads their own image and uses it exactly as they would a built-in template. Accept PNG, JPG, JPEG, WEBP, SVG and GIF.
+
+On upload, render the image to the canvas and let the operator define text zones by clicking and dragging a rectangle directly onto the image. Each rectangle becomes a named editable text zone supporting merge tags. Let them add, move, resize, rename and delete zones freely. Save the resulting configuration alongside the image in Supabase so an uploaded meme becomes a permanent part of the operator's library rather than a single use.
+
+Handle each format correctly. Rasterise SVG to canvas before compositing so text layers over it properly. For GIF, decode the frames and let the operator choose between using one static frame or preserving the animation.
+
+Render meme text in Impact or Anton loaded from Google Fonts, white with a black stroke outline, which is the convention readers expect. Give every zone independent font size, alignment and colour controls, plus a toggle to remove the outline for templates where clean type reads better.
+
+Offer three caption tone presets — professional wit, cheeky, and challenger — that prefill suggested caption structures the operator then edits. These are starting points that remove the blank page problem, not locked templates.
+</phase_four_meme_generator>
+
+<phase_five_personalisation_injection>
+Build the two features that pull the prospect's own imagery into the canvas. These produce the largest lift in reply rate of anything in this tool, because the prospect recognises their own material inside the image.
+
+Website screenshot injection. When the uploaded spreadsheet contains a column holding a screenshot URL, produced upstream in Clay, the operator designates that column and places the screenshot into a positioned resizable zone on the canvas. Support rounded corners, an optional border, and an optional browser chrome frame drawn around it so it reads as a genuine screenshot rather than a pasted rectangle.
+
+LinkedIn profile photo injection. When the spreadsheet contains a profile photo URL column, the operator designates it and composites that photo into the canvas as a circular avatar, positioned and sized freely.
+
+Both of these load images cross origin, so set crossOrigin on the image elements or route them through a proxy, otherwise the canvas becomes tainted and export silently fails. Handle a failed image load by substituting a neutral placeholder rather than breaking the entire batch — with four hundred rows, some URLs will always be dead, and one dead URL must never stop the run.
+</phase_five_personalisation_injection>
+
+<phase_six_bulk_generation>
+Build the bulk pipeline. Run all generation inside a Web Worker so the interface stays responsive — a four hundred row batch must never freeze the browser.
+
+Show a progress indicator with current position and total. On completion, present a scrollable thumbnail grid of every generated image so the operator can scan the whole batch at a glance and catch broken merge tags, awkward line breaks, or failed image injections before anything ships to a client campaign.
+
+Add checkbox selection on the grid so the operator can export a subset.
+
+Offer a custom file naming pattern accepting merge tags and the row variable, with a live filename preview updating as they type, so a pattern like {name}_{company}_note.png previews as Sarah_Atlassian_note.png before they commit.
+
+Implement ZIP download using JSZip and FileSaver for all images or the selected subset.
+
+Add a deliverability guard. Check each generated file size and flag anything above 200 kilobytes, because heavy images hurt inbox placement in cold email. Offer one click compression that steps quality down until the file drops under the threshold, showing before and after sizes so the operator can judge whether the quality cost is worth it.
+</phase_six_bulk_generation>
+
+<phase_seven_animated_gif>
+Build animated GIF output. This is the hardest part of the application, so build it last among the generation features and isolate it cleanly.
+
+Two paths produce animation. First, an uploaded GIF template: decode its frames, composite the personalised text and any injected imagery onto every single frame, and re-encode as an animated GIF. Second, generated animation over a static template: offer simple presets such as text fading in, text sliding in from an edge, or a two state flip between two text variants, rendered across a short frame sequence.
+
+Encode using gif.js running inside a Web Worker. Give the operator control over frame rate, loop count and output quality, and display the resulting file size prominently, because animated GIFs balloon fast and a two megabyte GIF will damage deliverability far more than the animation helps reply rate. Apply the 200 kilobyte guard here with an explicit warning rather than a silent pass.
+
+Bulk GIF generation runs significantly slower than static generation. Show a realistic time estimate before starting, allow cancellation mid batch, and preserve completed frames so a cancelled run is not entirely wasted.
+</phase_seven_animated_gif>
+
+<phase_eight_integration_chain>
+Build the downstream chain. This is what turns the tool from a novelty into infrastructure, because it removes every manual step between generating an image and that image appearing in a live campaign.
+
+Supabase Storage as the image host. On export, upload every generated image to the gtm-images bucket and capture its permanent public URL. Permanence is the whole point — Airtable attachment URLs expire, and an expired URL means a broken image inside a campaign that is already sending. Organise uploads into folders by campaign name and date so the bucket stays navigable, and show a storage usage indicator on the dashboard against the one gigabyte free tier limit so the operator knows when to prune old campaigns.
+
+Airtable as the hub and review layer. Build a connection panel where the operator enters an Airtable personal access token, a base ID and a table name, with a test connection button that confirms access before any write occurs. On export, write one record per row containing every original spreadsheet field plus the image URL, the campaign name, the channel variant and a generation timestamp. Match against existing records by email address where one already exists, and create a new record otherwise. Show per row sync status so a partial failure is visible rather than silent.
+
+Name the URL column two ways in the export: image_url and smartlead_image_url. Clay reads the first through an Airtable source column. Smartlead maps the second directly to a custom variable without the operator renaming anything.
+
+Include a copyable HTML snippet in the export panel showing the exact image tag with the Smartlead variable placeholder, sized correctly for email clients, so the operator pastes it straight into a sequence template rather than writing it by hand.
+
+Add a short help panel — a few sentences, not a wall of documentation — explaining that Clay should read the Airtable base through an Airtable source or HTTP API column pointed at the image_url field. Nothing needs building on the Clay side.
+
+Write the Supabase and Airtable integrations as separate typed service modules with their own error handling, kept apart from the canvas and interface code.
+</phase_eight_integration_chain>
+
+<phase_nine_presets_and_polish>
+Build campaign presets. The operator saves a complete configuration — template choice, all text content, font settings, colours, element positions, injection zone coordinates and variant default — as a named preset in Supabase. Presets load into either generator with one click, so the same visual style gets reapplied to the next client campaign without being rebuilt from scratch. This is the feature that makes the tool fast on the tenth campaign rather than only the first.
+
+Finish the dashboard showing recent campaigns, saved presets, and storage usage.
+
+Add empty states everywhere, including a sample dataset loader — ten fake contacts — so a new team member can explore the tool without uploading a real client list.
+
+Run a final pass over every screen against the brand rules.
+</phase_nine_presets_and_polish>
+
+<technical_requirements>
+Use React with TypeScript, Tailwind CSS, and React Router.
+
+Use Fabric.js for canvas manipulation, because it handles draggable text objects, layered images and per object transforms cleanly, all of which this tool needs throughout. Use PapaParse for CSV, SheetJS for spreadsheets, gif.js for GIF encoding, JSZip with FileSaver for downloads, and the Supabase client for auth, storage and persistence. Call the Airtable REST API directly.
+
+Run every bulk operation and every GIF encode inside a Web Worker.
+
+Lazy load Fabric.js, SheetJS and gif.js. They are large and none is needed until a file is uploaded, so loading them on initial render wastes the first paint.
+
+Everything runs client side except authentication, storage uploads, preset persistence and the explicit Airtable export. No custom backend server is required beyond Supabase.
+
+Never put credentials in source. Supabase keys come from the native integration. The Airtable token lives in the operator's session only.
+
+Surface every external call failure in the interface with a clear message. A silent failure partway through a four hundred row export is far worse than a loud one.
+</technical_requirements>
+
+<how_to_proceed>
+Build phase one completely and confirm it runs before starting phase two. Work through the phases in order. Do not scaffold later phases as placeholders while building earlier ones — each phase must actually work before the next begins.
+
+Before finishing any phase, check your work against these: every heading at 32 pixels and above carries negative letter spacing, every button uses the 1584 pixel pill radius, violet and teal appear only on actions and accents rather than as background fills, cards carry the sand border and twelve pixel radius and subtle shadow, the page caps at 1200 pixels, Inter is applied throughout, no credentials sit in source, every external call has a visible error path, and every feature named in the phase genuinely runs.
+
+Start by confirming you understand the full scope, then ask me for anything you need before building phase one.
+
+Think before answering (maximum reasoning)
+```
