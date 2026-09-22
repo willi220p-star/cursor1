@@ -1177,19 +1177,22 @@ function drawTypedNote(
 let artefactTypefacesReady = false;
 
 async function ensureArtefactTypefaces(config: StudioConfig) {
-  if (artefactTypefacesReady || typeof document === 'undefined' || !document.fonts) return;
+  if (typeof document === 'undefined' || !document.fonts) return;
   await loadArtefactFonts();
   const family = config.fontFamily || (config.mode === 'avatar' ? 'Space Grotesk' : 'Homemade Apple');
-  await Promise.all([
-    document.fonts.load(`${config.fontSize || 28}px "${family}"`),
-    document.fonts.load(`500 ${config.fontSize || 28}px "Space Grotesk"`),
-    document.fonts.load(`700 ${config.fontSize || 28}px "Space Grotesk"`),
-    document.fonts.load(`500 ${config.fontSize || 28}px "Manrope"`),
-    document.fonts.load(`${config.fontSize || 40}px "Homemade Apple"`),
-    document.fonts.load(`${config.fontSize || 40}px Caveat`),
-    document.fonts.ready,
-  ]);
-  artefactTypefacesReady = true;
+  const size = config.fontSize || 40;
+  if (!artefactTypefacesReady) {
+    await Promise.all([
+      document.fonts.load(`500 ${size}px "Space Grotesk"`),
+      document.fonts.load(`700 ${size}px "Space Grotesk"`),
+      document.fonts.load(`500 ${size}px "Manrope"`),
+      document.fonts.load(`${size}px "Homemade Apple"`),
+      document.fonts.load(`${size}px Caveat`),
+      document.fonts.ready,
+    ]);
+    artefactTypefacesReady = true;
+  }
+  await document.fonts.load(`${size}px "${family}"`);
 }
 
 export async function renderStudioCanvas(

@@ -104,6 +104,7 @@ import {
   guessColumn,
   handwritingFonts,
   handwritingKinds,
+  sheetHandwritingStyles,
   memeMotions,
   messageColumnAliases,
   modeHref,
@@ -2055,8 +2056,40 @@ export function StudioGenerator({
                 })}
               </RadioGroup>
             </FieldRow>
-            <FieldRow id="handwriting-style" label="Handwriting font">
-              <select id="handwriting-style" className="field" value={config.fontFamily} onChange={(event) => updateConfig('fontFamily', event.target.value)}>
+            <FieldRow id="handwriting-style" label="Writing style" hint="Nine handwriting looks. The note uses the one you pick.">
+              <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
+                {sheetHandwritingStyles.map((style) => {
+                  const active = config.fontFamily === style.font && !config.customFontDataUrl;
+                  return (
+                    <button
+                      type="button"
+                      key={style.font}
+                      role="option"
+                      aria-selected={active}
+                      className={`writing-style ${active ? 'is-active' : ''}`}
+                      onClick={() => setConfig((current) => ({ ...current, fontFamily: style.font, customFontDataUrl: undefined }))}
+                    >
+                      <span className="writing-style-sample" style={{ fontFamily: `"${style.font}", cursive`, fontSize: style.size }}>{style.sample}</span>
+                      <span className="writing-style-name">{style.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </FieldRow>
+            <FieldRow id="handwriting-font" label="Other fonts" hint="The fonts already on this desk, or a file you upload below.">
+              <select
+                id="handwriting-font"
+                className="field"
+                value={handwritingFonts.includes(config.fontFamily as (typeof handwritingFonts)[number]) ? config.fontFamily : ''}
+                onChange={(event) => {
+                  const fontFamily = event.target.value;
+                  if (!fontFamily) return;
+                  setConfig((current) => ({ ...current, fontFamily, customFontDataUrl: undefined }));
+                }}
+              >
+                {!handwritingFonts.includes(config.fontFamily as (typeof handwritingFonts)[number]) && (
+                  <option value="">{config.fontFamily.replace(/^Custom-/, 'Uploaded: ')}</option>
+                )}
                 {handwritingFonts.map((font) => <option key={font} value={font}>{font}</option>)}
               </select>
             </FieldRow>

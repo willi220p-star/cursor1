@@ -366,7 +366,21 @@ export function migrateDeskSurface(value: string | undefined): DeskSurface {
   return 'pine';
 }
 
+/** Nine looks from the handwriting sheet, in the same order as the sample page. */
+export const sheetHandwritingStyles = [
+  { font: 'Satisfy', label: 'Dearest friend', sample: 'To my dearest friend', size: 22 },
+  { font: 'Rock Salt', label: 'Quick scrawl', sample: 'I hope this letter', size: 18 },
+  { font: 'Architects Daughter', label: 'Dear diary', sample: 'Dear diary,', size: 20 },
+  { font: 'Caveat Brush', label: 'Brush note', sample: 'Just wanted to drop', size: 22 },
+  { font: 'Great Vibes', label: 'Warm script', sample: 'With love and warm', size: 28 },
+  { font: 'Cedarville Cursive', label: 'Everyday cursive', sample: 'Thinking of you and', size: 22 },
+  { font: 'Permanent Marker', label: 'Quick caps', sample: 'HEY! JUST A QUICK', size: 15 },
+  { font: 'Gloria Hallelujah', label: 'Loose print', sample: "Can't wait to see", size: 18 },
+  { font: 'La Belle Aurore', label: 'Small cursive', sample: 'Sending you all my best', size: 24 },
+] as const;
+
 export const handwritingFonts = [
+  ...sheetHandwritingStyles.map((style) => style.font),
   'Homemade Apple',
   'Covered By Your Grace',
   'Caveat',

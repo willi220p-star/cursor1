@@ -576,6 +576,38 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 }
 .hand-option:hover { border-color: var(--primary); background: var(--accent); }
 .hand-option.is-active { border-color: var(--primary); background: var(--accent); color: var(--primary); }
+.writing-style-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.writing-style {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 72px;
+  padding: 10px 12px 8px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
+  background: #f7f0e1;
+  color: #173765;
+  text-align: left;
+  cursor: pointer;
+}
+.writing-style-sample {
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.15;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.writing-style-name {
+  font-family: var(--font-sans, inherit);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: #6b5f55;
+}
+.writing-style:hover { border-color: var(--primary); }
+.writing-style.is-active { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.writing-style:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .tag-chip {
   display: inline-flex;
   align-items: center;
