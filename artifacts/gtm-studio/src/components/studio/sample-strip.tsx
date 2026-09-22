@@ -49,8 +49,8 @@ export function SampleStrip({
       <div className="film-reel-head">
         <div>
           <p className="eyebrow">Templates</p>
-          <h2 id="templates-heading" className="text-lg font-semibold">Copyright-safe templates, or drop in a live GIF</h2>
-          <p className="helper mt-1">Original photos in the layouts from the 50 copyright-safe meme set. No celebrity stills or cartoon characters.</p>
+          <h2 id="templates-heading" className="text-lg font-semibold">Templates, or drop in a live GIF</h2>
+          <p className="helper mt-1">Pick a layout and edit the text. The picture stays.</p>
         </div>
         <FileButton className="btn btn-primary" accept={ACCEPT} onChange={onAddLive}>
           <Plus size={16} aria-hidden /> Add live GIF

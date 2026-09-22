@@ -58,12 +58,208 @@ const stacked = (lines: string[]): TextLayer[] =>
     34,
   ));
 
+const leftColumn = (lines: string[], top = 0.02, span = 0.96): TextLayer[] =>
+  lines.map((text, index) => {
+    const slot = span / lines.length;
+    return layer(`tier-${index}`, `Line ${index + 1}`, text, 0.03, top + index * slot + slot * 0.16, 0.46, slot * 0.68, 32, {
+      color: '#161616',
+      outline: false,
+    });
+  });
+
 /**
  * Original photographs in the familiar ad layouts from
  * https://shlomo-genchin.notion.site/50-Copyright-Safe-Meme-Templates-66a71bb3274a42bda72859dfa2be8a5f
  * — no copyrighted characters or celebrity stills.
  */
 export const memeSamples: MemeSample[] = [
+  {
+    id: 'pack-garden-bench',
+    name: 'Waiting on the bench',
+    blurb: 'Drift — still sitting there',
+    src: publicAssetUrl('/samples/pack-garden-bench.jpg'),
+    animation: 'drift',
+    photoMotion: 'drift',
+    layers: topBottom('{first_name|THERE} IS STILL WAITING', 'The {company} sequence never landed.'),
+  },
+  {
+    id: 'pack-my-heart',
+    name: 'My heart',
+    blurb: 'Pop — each beat grows',
+    src: publicAssetUrl('/samples/pack-my-heart.jpg'),
+    animation: 'pop',
+    layers: leftColumn([
+      'One cold email',
+      'A follow-up to {first_name|them}',
+      'A note {company} will actually open',
+    ], 0.2, 0.76),
+  },
+  {
+    id: 'pack-room-on-fire',
+    name: 'Room on fire',
+    blurb: 'Rise — the room heats up',
+    src: publicAssetUrl('/samples/pack-room-on-fire.jpg'),
+    animation: 'rise',
+    photoMotion: 'rise',
+    effect: 'fire',
+    layers: topBottom('THIS IS FINE', '{company} is still on the old sequence.'),
+  },
+  {
+    id: 'pack-bike-crash',
+    name: 'Bike crash',
+    blurb: 'Shake — three beats',
+    src: publicAssetUrl('/samples/pack-bike-crash.png'),
+    animation: 'shake',
+    layers: [
+      layer('panel-1', 'Panel 1', '{first_name|THERE} STARTS THE SEQUENCE', 0.06, 0.02, 0.88, 0.1, 36),
+      layer('panel-2', 'Panel 2', 'Tries to steer it at {company}', 0.06, 0.35, 0.88, 0.1, 36),
+      layer('panel-3', 'Panel 3', 'The note never lands', 0.06, 0.68, 0.88, 0.1, 36),
+    ],
+  },
+  {
+    id: 'pack-looking-back',
+    name: 'Looking back',
+    blurb: 'Slide — the glance turns',
+    src: publicAssetUrl('/samples/pack-looking-back.jpg'),
+    animation: 'slide',
+    layers: [
+      layer('other', 'New idea', 'A note for {company}', 0.02, 0.78, 0.32, 0.16, 32),
+      layer('looker', 'Looking', '{first_name|there}', 0.36, 0.04, 0.3, 0.14, 36),
+      layer('current', 'Old way', 'The old sequence', 0.66, 0.78, 0.32, 0.16, 32),
+    ],
+  },
+  {
+    id: 'pack-expanding-brain',
+    name: 'Expanding brain',
+    blurb: 'Pop — four tiers',
+    src: publicAssetUrl('/samples/pack-expanding-brain.jpg'),
+    animation: 'pop',
+    layers: leftColumn([
+      'Another cold email',
+      'A warmer follow-up',
+      'A note with {first_name|their} name',
+      'Something {company} opens',
+    ]),
+  },
+  {
+    id: 'pack-still-in-bed',
+    name: 'Still in bed',
+    blurb: 'Fade — not moving yet',
+    src: publicAssetUrl('/samples/pack-still-in-bed.png'),
+    animation: 'fade',
+    layers: topBottom('{first_name|THERE} HAS NOT REPLIED', '{company} can still get a better note.'),
+  },
+  {
+    id: 'pack-left-out',
+    name: 'Left out',
+    blurb: 'Wobble — the group behind',
+    src: publicAssetUrl('/samples/pack-left-out.png'),
+    animation: 'wobble',
+    layers: [
+      layer('front', 'In front', '{first_name|there}', 0.04, 0.78, 0.42, 0.16, 40),
+      layer('back', 'Behind', 'Everyone else at {company}', 0.48, 0.04, 0.48, 0.16, 32),
+    ],
+  },
+  {
+    id: 'pack-dog-coffee',
+    name: 'Dog with coffee',
+    blurb: 'Shake — the room is on fire',
+    src: publicAssetUrl('/samples/pack-dog-coffee.png'),
+    animation: 'shake',
+    effect: 'fire',
+    layers: topBottom('THIS IS FINE', '{company} kept the same outbound.'),
+  },
+  {
+    id: 'pack-wooden-bench',
+    name: 'Still sitting',
+    blurb: 'Drift — waiting it out',
+    src: publicAssetUrl('/samples/pack-wooden-bench.png'),
+    animation: 'drift',
+    photoMotion: 'drift',
+    layers: topBottom('STILL HERE, {first_name|THERE}', 'Waiting on {company}.'),
+  },
+  {
+    id: 'pack-weak-spot',
+    name: 'One weak spot',
+    blurb: 'Pulse — the small miss',
+    src: publicAssetUrl('/samples/pack-weak-spot.png'),
+    animation: 'pulse',
+    layers: topBottom('ONE DETAIL', 'is why {company} did not reply.'),
+  },
+  {
+    id: 'pack-pill-bottle',
+    name: 'Pill bottle',
+    blurb: 'Shake — hard to swallow',
+    src: publicAssetUrl('/samples/pack-pill-bottle.png'),
+    animation: 'shake',
+    layers: [
+      layer('dose', 'The point', 'The {company} sequence is being ignored.', 0.08, 0.78, 0.84, 0.16, 36, { color: '#161616', outline: false }),
+    ],
+  },
+  {
+    id: 'pack-headache-map',
+    name: 'Headache map',
+    blurb: 'Flip — four kinds of pain',
+    src: publicAssetUrl('/samples/pack-headache-map.png'),
+    animation: 'flip',
+    layers: [
+      layer('h1', 'One', 'One ignored email', 0.04, 0.2, 0.42, 0.12, 28, { color: '#161616', outline: false }),
+      layer('h2', 'Two', 'A second follow-up', 0.52, 0.2, 0.44, 0.12, 28, { color: '#161616', outline: false }),
+      layer('h3', 'Three', 'The same sequence', 0.04, 0.58, 0.42, 0.12, 28, { color: '#161616', outline: false }),
+      layer('h4', 'Four', '{company} goes quiet', 0.52, 0.58, 0.44, 0.12, 28, { color: '#161616', outline: false }),
+    ],
+  },
+  {
+    id: 'pack-train-bus',
+    name: 'Train meets bus',
+    blurb: 'Slide — then it hits',
+    src: publicAssetUrl('/samples/pack-train-bus.png'),
+    animation: 'slide',
+    layers: [
+      layer('top', 'Before', 'THE SEQUENCE LOOKS FINE', 0.06, 0.02, 0.88, 0.12, 36),
+      layer('bottom', 'After', 'Then it hits {company}', 0.06, 0.5, 0.88, 0.12, 36),
+    ],
+  },
+  {
+    id: 'pack-showing-up',
+    name: 'Showing up',
+    blurb: 'Pop — they still arrive',
+    src: publicAssetUrl('/samples/pack-showing-up.png'),
+    animation: 'pop',
+    layers: [
+      layer('arrive', 'Caption', '{first_name|there} still showing up for {company}', 0.06, 0.28, 0.5, 0.28, 40, { color: '#161616', outline: false, align: 'left' }),
+    ],
+  },
+  {
+    id: 'pack-same-smile',
+    name: 'Same smile',
+    blurb: 'Fade — nothing changed',
+    src: publicAssetUrl('/samples/pack-same-smile.png'),
+    animation: 'fade',
+    layers: [
+      layer('before', 'Before', 'Before the {company} note', 0.06, 0.02, 0.88, 0.12, 36),
+      layer('after', 'After', 'After the {company} note', 0.06, 0.5, 0.88, 0.12, 36),
+    ],
+  },
+  {
+    id: 'pack-bedside',
+    name: 'Bedside note',
+    blurb: 'Rise — a quiet check-in',
+    src: publicAssetUrl('/samples/pack-bedside.png'),
+    animation: 'rise',
+    layers: topBottom('WE SHOULD TALK, {first_name|THERE}', '{company} can still turn this around.'),
+  },
+  {
+    id: 'pack-two-searches',
+    name: 'Two searches',
+    blurb: 'Flip — eleven minutes later',
+    src: publicAssetUrl('/samples/pack-two-searches.png'),
+    animation: 'flip',
+    layers: [
+      layer('q1', 'First search', 'how to reach {company}', 0.18, 0.3, 0.62, 0.1, 28, { color: '#202124', outline: false, align: 'left' }),
+      layer('q2', 'Second search', 'did {first_name|they} open it', 0.18, 0.8, 0.62, 0.1, 28, { color: '#202124', outline: false, align: 'left' }),
+    ],
+  },
   {
     id: 'two-buttons',
     name: 'Two buttons',
