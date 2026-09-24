@@ -98,6 +98,8 @@ export function Library({
   const [savingName, setSavingName] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [sortDesc, setSortDesc] = useState(true);
+  const [preview, setPreview] = useState<StoredFile | null>(null);
+  const [previewBroken, setPreviewBroken] = useState(false);
 
   const load = () => {
     listStoredFiles(userId).then(setFiles).catch(() => setFiles([]));
@@ -233,6 +235,20 @@ export function Library({
     void run(item.id, work, `${item.name} moved to ${destination}`, `Could not move ${item.name}`);
   };
 
+  const openFile = (file: StoredFile) => {
+    if (!file.publicUrl) {
+      toast.error(`${file.filename} has no Supabase link.`);
+      return;
+    }
+    if (/\.(png|jpe?g|gif|webp|svg)$/i.test(file.filename)) {
+      setPreviewBroken(false);
+      setPreview(file);
+      return;
+    }
+    const opened = window.open(file.publicUrl, '_blank', 'noopener,noreferrer');
+    if (!opened) toast.error('Allow pop-ups to open that file.');
+  };
+
   const nameLabel = naming?.kind === 'rename-file'
     ? 'File name'
     : naming?.kind === 'rename-template' || naming?.kind === 'rename-campaign'
@@ -324,14 +340,14 @@ export function Library({
                 {visibleItems.map((item) => (
                   <tr
                     key={`${item.kind}-${item.id}`}
-                    className={item.kind === 'file' ? 'is-file' : undefined}
                     data-library-kind={item.kind}
                     data-library-id={item.id}
                     data-library-name={item.name}
                     data-storage-path={item.kind === 'file' ? item.file.storagePath : undefined}
                     onClick={() => {
                       if (item.kind === 'template') onOpenTemplate(item.template);
-                      if (item.kind === 'campaign') onOpenCampaign(item.campaign);
+                      else if (item.kind === 'campaign') onOpenCampaign(item.campaign);
+                      else openFile(item.file);
                     }}
                   >
                     <td>
@@ -350,15 +366,17 @@ export function Library({
                     <td className="text-muted-foreground" title={new Date(item.at).toLocaleString()}>{relativeTime(item.at)}</td>
                     <td className="text-right" onClick={(event) => event.stopPropagation()}>
                       <div className="flex justify-end gap-2">
-                        {item.kind !== 'file' && (
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-sm"
-                            onClick={() => (item.kind === 'template' ? onOpenTemplate(item.template) : onOpenCampaign(item.campaign))}
-                          >
-                            Open <ArrowRight size={16} aria-hidden />
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => {
+                            if (item.kind === 'template') onOpenTemplate(item.template);
+                            else if (item.kind === 'campaign') onOpenCampaign(item.campaign);
+                            else openFile(item.file);
+                          }}
+                        >
+                          Open <ArrowRight size={16} aria-hidden />
+                        </button>
                         <ActionsMenu label={`Actions for ${item.name}`} busy={busyId === item.id} storagePath={item.kind === 'file' ? item.file.storagePath : undefined}>
                           <DropdownMenuItem
                             className="min-h-11"
@@ -411,6 +429,28 @@ export function Library({
           </div>
         )}
       </div>
+
+      <Dialog open={preview !== null} onOpenChange={(open) => { if (!open) setPreview(null); }}>
+        <DialogContent className="max-w-3xl rounded-[12px] border-border bg-card">
+          <DialogHeader>
+            <DialogTitle className="display pr-8 text-2xl font-semibold">{preview?.filename}</DialogTitle>
+            <DialogDescription>This is the file saved in Supabase.</DialogDescription>
+          </DialogHeader>
+          {preview && (previewBroken ? (
+            <p className="text-sm text-muted-foreground">This image could not be loaded from Supabase.</p>
+          ) : (
+            <img
+              src={preview.publicUrl}
+              alt={preview.filename}
+              className="max-h-[70vh] w-full rounded-md bg-surface-2 object-contain"
+              onError={() => setPreviewBroken(true)}
+            />
+          ))}
+          {preview?.publicUrl && (
+            <a className="btn btn-primary" href={preview.publicUrl} target="_blank" rel="noreferrer">Open in a new tab</a>
+          )}
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={naming !== null} onOpenChange={(open) => { if (!open) setNaming(null); }}>
         <DialogContent className="rounded-[12px] border-border bg-card">

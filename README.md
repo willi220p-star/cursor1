@@ -72,7 +72,7 @@ Upgrade later only if you outgrow free auth or storage quotas.
 - Download this row, or download all rows as a ZIP with `prospects.csv` and an Airtable-ready manifest
 - Campaigns save locally and sync to Supabase when you are signed in. Delete on the desk removes that campaign, and its imported list and generated files, from Supabase as well.
 - Saved studio looks can be deleted from the desk or from Saved templates inside a studio. Delete removes that look from Supabase.
-- The desk library holds templates, created files, and campaigns in one list. New folder creates a Supabase folder that can hold all three. The three-dot menu on each item can rename it, move it into a folder, or delete it from Supabase. Open still resumes a template or campaign.
+- The desk library holds templates, created files, and campaigns in one list. New folder creates a Supabase folder that can hold all three. The three-dot menu on each item can rename it, move it into a folder, or delete it from Supabase. Open resumes a template or campaign. Open on a saved image shows the file, and Open on a spreadsheet or other file opens it from Supabase.
 
 ## Layout
 

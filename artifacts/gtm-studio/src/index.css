@@ -375,7 +375,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .ledger thead th { position: sticky; top: 0; z-index: 1; padding: 0 18px; height: 48px; text-align: left; background: var(--card); color: var(--muted-foreground); font-family: var(--app-font-mono); font-size: 12px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
 .ledger tbody td { height: 60px; padding: 0 18px; border-top: 1px solid var(--border); vertical-align: middle; }
 .ledger tbody tr { cursor: pointer; transition: background-color var(--dur-fast) var(--ease-standard); }
-.ledger tbody tr.is-file { cursor: default; }
+.ledger tbody tr.is-file { cursor: pointer; }
 .ledger tbody tr:hover { background: var(--surface-2); }
 .ledger tbody tr:focus-within { background: var(--surface-2); }
 .ledger td.num, .ledger th.num { text-align: right; font-family: var(--app-font-mono); }
