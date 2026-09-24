@@ -78,6 +78,7 @@ import {
   persistStudioImage,
   removeStoredImage,
   saveCampaign,
+  removeCopyTemplate,
   saveCopyTemplate,
   saveTemplateConfig,
   subscribeTemplateChanges,
@@ -318,6 +319,7 @@ export function StudioGenerator({
   const [copyTemplateBody, setCopyTemplateBody] = useState('');
   const [selectedCopyTemplateId, setSelectedCopyTemplateId] = useState('');
   const [savingCopyTemplate, setSavingCopyTemplate] = useState(false);
+  const [removingCopyTemplate, setRemovingCopyTemplate] = useState(false);
   const [libraryMemes, setLibraryMemes] = useState<MemeSample[]>([]);
   const [listOpen, setListOpen] = useState(false);
   const [listStep, setListStep] = useState<ImportStep>('source');
@@ -492,6 +494,24 @@ export function StudioGenerator({
     }
     toast(result.template.cloud ? 'Template saved' : 'Template saved in this browser', { description: result.template.name });
     setAnnouncement(`Template ${result.template.name} saved`);
+  };
+
+  const removeSelectedCopyTemplate = async () => {
+    const match = copyTemplates.find((item) => item.id === selectedCopyTemplateId);
+    if (!match || removingCopyTemplate) return;
+    setRemovingCopyTemplate(true);
+    const result = await removeCopyTemplate(match, userId);
+    const rows = await listCopyTemplates(userId);
+    setRemovingCopyTemplate(false);
+    if (result.syncError) {
+      setCopyTemplates(rows);
+      toast('Template stayed in Supabase', { description: result.syncError });
+      return;
+    }
+    setCopyTemplates(rows.filter((item) => item.id !== match.id && item.name.toLowerCase() !== match.name.toLowerCase()));
+    setSelectedCopyTemplateId('');
+    toast('Template removed', { description: match.name });
+    setAnnouncement(`Template ${match.name} removed`);
   };
 
   const applyCopyTemplate = (id: string) => {
@@ -1990,19 +2010,33 @@ export function StudioGenerator({
               >
                 <Plus size={16} aria-hidden /> Add template
               </button>
-              <FieldRow id="copy-template-select" label="Select">
-                <select
-                  id="copy-template-select"
-                  className="field"
-                  value={selectedCopyTemplateId}
-                  onChange={(event) => applyCopyTemplate(event.target.value)}
+              <div className="flex items-end gap-2">
+                <div className="min-w-0 flex-1">
+                  <FieldRow id="copy-template-select" label="Select">
+                    <select
+                      id="copy-template-select"
+                      className="field"
+                      value={selectedCopyTemplateId}
+                      onChange={(event) => applyCopyTemplate(event.target.value)}
+                    >
+                      <option value="">{copyTemplates.length ? 'Choose a template' : 'No templates yet'}</option>
+                      {copyTemplates.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </select>
+                  </FieldRow>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-danger flex-none"
+                  disabled={!selectedCopyTemplateId || removingCopyTemplate}
+                  data-loading={removingCopyTemplate || undefined}
+                  aria-busy={removingCopyTemplate || undefined}
+                  onClick={() => void removeSelectedCopyTemplate()}
                 >
-                  <option value="">{copyTemplates.length ? 'Choose a template' : 'No templates yet'}</option>
-                  {copyTemplates.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))}
-                </select>
-              </FieldRow>
+                  <Trash2 size={16} aria-hidden /> Remove
+                </button>
+              </div>
             </>
           )}
           <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{config.copy.length} chars · {copyLines} lines</span></span>}>

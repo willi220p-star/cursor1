@@ -247,6 +247,20 @@ export async function saveCopyTemplate(name: string, body: string, userId?: stri
   return { template: saved };
 }
 
+export async function removeCopyTemplate(template: CopyTemplate, userId?: string): Promise<{ syncError?: string }> {
+  const current = readLocalCopyTemplates(userId);
+  writeLocalCopyTemplates(
+    current.filter((item) => item.id !== template.id && item.name.toLowerCase() !== template.name.toLowerCase()),
+    userId,
+  );
+  if (!supabase || !userId) return {};
+  const byId = await supabase.from('outbound_copy_templates').delete().eq('id', template.id);
+  if (byId.error) return { syncError: byId.error.message };
+  const byName = await supabase.from('outbound_copy_templates').delete().eq('name', template.name);
+  if (byName.error) return { syncError: byName.error.message };
+  return {};
+}
+
 async function dataUrlBlob(dataUrl: string) {
   return (await fetch(dataUrl)).blob();
 }
