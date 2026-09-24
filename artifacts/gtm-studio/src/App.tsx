@@ -1,12 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
 import {
   ArrowRight,
-  ArrowUpDown,
   CircleUser,
-  Cloud,
-  Database,
   Film,
   Gauge,
   Image,
@@ -17,7 +14,6 @@ import {
   PenLine,
   Settings2,
   ShieldCheck,
-  Trash2,
   UploadCloud,
 } from 'lucide-react';
 import {
@@ -32,7 +28,6 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { Toaster } from '@/components/ui/sonner';
-import { toast } from 'sonner';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { LoginPage } from '@/pages/login';
@@ -40,8 +35,8 @@ import { StudioGenerator } from '@/components/studio-generator';
 import { CarouselGeneratorPage } from '@/carousel/page';
 import { exportsInLast30Days, relativeTime, requestSampleList } from '@/studio/activity';
 import { getCurrentSession, onAuthChange, signOutUser } from '@/studio/auth';
-import { CreatedFiles } from '@/components/studio/created-files';
-import { listCampaigns, listTemplateConfigs, removeCampaign, removeTemplateConfig, supabaseConfigured, subscribeTemplateChanges } from '@/studio/cloud';
+import { Library } from '@/components/studio/library';
+import { listCampaigns, supabaseConfigured, subscribeTemplateChanges } from '@/studio/cloud';
 import type { SavedCampaign, SavedTemplate, StudioMode } from '@/studio/types';
 
 const queryClient = new QueryClient();
@@ -209,50 +204,19 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
   const [, navigate] = useLocation();
   const scope = userId ?? 'anonymous';
   const [campaigns, setCampaigns] = useState<SavedCampaign[] | null>(null);
-  const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [libraryRevision, setLibraryRevision] = useState(0);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [sortDesc, setSortDesc] = useState(true);
-  const refreshDesk = () => {
+  const refreshStats = () => {
     listCampaigns(userId).then(setCampaigns).catch(() => setCampaigns([]));
-    listTemplateConfigs(userId).then(setTemplates).catch(() => setTemplates([]));
+  };
+  const refreshDesk = () => {
+    refreshStats();
     setLibraryRevision((value) => value + 1);
   };
   useEffect(() => {
-    refreshDesk();
+    refreshStats();
     return subscribeTemplateChanges(userId, refreshDesk);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
-  const deleteTemplate = async (template: SavedTemplate) => {
-    if (deletingId) return;
-    if (!window.confirm(`Delete “${template.name}”? It will be removed from this studio and from Supabase.`)) return;
-    setDeletingId(template.id);
-    try {
-      const result = await removeTemplateConfig(template, userId);
-      refreshDesk();
-      if (result.syncError) toast.error(`Could not delete ${template.name}`, { description: result.syncError });
-      else toast.success(`${template.name} deleted`);
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Could not delete that template.');
-    } finally {
-      setDeletingId(null);
-    }
-  };
-  const deleteSavedCampaign = async (campaign: SavedCampaign) => {
-    if (deletingId) return;
-    if (!window.confirm(`Delete “${campaign.name}”? The campaign and its stored files will be removed from Supabase.`)) return;
-    setDeletingId(campaign.id);
-    try {
-      const result = await removeCampaign(campaign, userId);
-      refreshDesk();
-      if (result.syncError) toast.error(`Could not delete ${campaign.name}`, { description: result.syncError });
-      else toast.success(`${campaign.name} deleted`);
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Could not delete that campaign.');
-    } finally {
-      setDeletingId(null);
-    }
-  };
   const openCampaign = (campaign: SavedCampaign) => {
     localStorage.setItem(`gtm-studio-load-campaign:${scope}`, JSON.stringify(campaign));
     navigate(modeHref(campaign.mode));
@@ -270,10 +234,6 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
   const contactCount = list.reduce((sum, campaign) => sum + (campaign.contacts?.length ?? 0), 0);
   const lastSave = list.reduce<string | null>((latest, campaign) => (!latest || campaign.updatedAt > latest ? campaign.updatedAt : latest), null);
   const exported = exportsInLast30Days(scope);
-  const sorted = useMemo(
-    () => [...list].sort((a, b) => (sortDesc ? b.updatedAt.localeCompare(a.updatedAt) : a.updatedAt.localeCompare(b.updatedAt))),
-    [list, sortDesc],
-  );
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   return (
@@ -317,125 +277,14 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
         </div>
       </section>
 
-      {templates.length > 0 && (
-        <section aria-labelledby="templates-heading" className="mt-10">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow">Templates</p>
-              <h2 id="templates-heading" className="display mt-1 text-2xl font-semibold">Reuse a studio look</h2>
-            </div>
-            <span className="mono text-sm text-muted-foreground">{templates.length} saved · edits in Supabase show here</span>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {templates.map((template) => (
-              <article key={template.id} className="panel flex min-w-0 flex-col gap-3 p-4">
-                <button type="button" className="flex w-full min-w-0 items-center gap-3 text-left" onClick={() => openTemplate(template)}>
-                  <span className="icon-disc"><ModeIcon mode={template.mode} size={16} /></span>
-                  <span className="min-w-0">
-                    <strong className="block truncate">{template.name}</strong>
-                    <small className="block text-muted-foreground">{modeLabel(template.mode)} · {template.cloud ? 'Supabase' : 'This browser'}</small>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger btn-sm self-start"
-                  aria-label={`Delete ${template.name}`}
-                  disabled={deletingId === template.id}
-                  onClick={() => void deleteTemplate(template)}
-                >
-                  <Trash2 size={16} aria-hidden /> Delete
-                </button>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <CreatedFiles userId={userId} revision={libraryRevision} />
-
-      <section aria-labelledby="ledger-heading" className="mt-10">
-        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="eyebrow">Ledger</p>
-            <h2 id="ledger-heading" className="display mt-1 text-2xl font-semibold">Resume recent work</h2>
-          </div>
-          <span className="mono text-sm text-muted-foreground">{list.length} saved</span>
-        </div>
-        <div className="ledger">
-          {campaigns === null ? (
-            <div className="space-y-3 p-4" aria-busy="true" aria-label="Loading campaigns">
-              {[0, 1, 2].map((i) => <div key={i} className="h-11 animate-pulse rounded-md bg-surface-2" />)}
-            </div>
-          ) : sorted.length ? (
-            <div className="overflow-x-auto">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">Name</th>
-                    <th scope="col" className="mobile-hide">Studio</th>
-                    <th scope="col" className="num">Rows</th>
-                    <th scope="col" aria-sort={sortDesc ? 'descending' : 'ascending'}>
-                      <button type="button" className="inline-flex h-11 items-center gap-1 uppercase tracking-[.06em]" onClick={() => setSortDesc((value) => !value)}>
-                        Updated <ArrowUpDown size={14} aria-hidden />
-                      </button>
-                    </th>
-                    <th scope="col" className="mobile-hide">Where</th>
-                    <th scope="col"><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sorted.map((campaign) => (
-                    <tr key={campaign.id} onClick={() => openCampaign(campaign)}>
-                      <td>
-                        <span className="flex items-center gap-3">
-                          <span className="icon-disc"><ModeIcon mode={campaign.mode} size={16} /></span>
-                          <span className="truncate font-semibold">{campaign.name}</span>
-                        </span>
-                      </td>
-                      <td className="mobile-hide text-muted-foreground">{modeLabel(campaign.mode)}</td>
-                      <td className="num">{campaign.contacts?.length ?? 0}</td>
-                      <td className="text-muted-foreground" title={new Date(campaign.updatedAt).toLocaleString()}>{relativeTime(campaign.updatedAt)}</td>
-                      <td className="mobile-hide">
-                        <Badge variant="outline" className="gap-1 font-medium">{campaign.cloud ? <Cloud size={14} aria-hidden /> : <Database size={14} aria-hidden />}{campaign.cloud ? 'Cloud' : 'Local'}</Badge>
-                      </td>
-                      <td className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <button type="button" className="btn btn-ghost btn-sm" onClick={(event) => { event.stopPropagation(); openCampaign(campaign); }}>Open <ArrowRight size={16} aria-hidden /></button>
-                          <button
-                            type="button"
-                            className="btn btn-danger btn-sm"
-                            aria-label={`Delete ${campaign.name}`}
-                            disabled={deletingId === campaign.id}
-                            onClick={(event) => { event.stopPropagation(); void deleteSavedCampaign(campaign); }}
-                          >
-                            <Trash2 size={16} aria-hidden /> Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty-state">
-              <Database size={24} className="text-muted-foreground" aria-hidden />
-              <h3>No campaigns yet</h3>
-              <p>Import a list from any studio and press Save. Your first save appears here.</p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">
-                <Link href="/handwritten" className="btn btn-primary">Start with Notes</Link>
-                <button type="button" className="btn btn-quiet" onClick={loadSample}>Load sample list</button>
-              </div>
-              <ol className="process-strip mt-8 w-full max-w-[880px] text-left">
-                <li><span>01</span> Drop a list on the desk</li>
-                <li><span>02</span> Write once with merge tags</li>
-                <li><span>03</span> Tune ink, paper or motion</li>
-                <li><span>04</span> Download this row or the ZIP</li>
-              </ol>
-            </div>
-          )}
-        </div>
-      </section>
+      <Library
+        userId={userId}
+        revision={libraryRevision}
+        onChanged={refreshDesk}
+        onOpenCampaign={openCampaign}
+        onOpenTemplate={openTemplate}
+        onLoadSample={loadSample}
+      />
     </div>
   );
 }

@@ -40,7 +40,7 @@ export async function listCampaigns(userId?: string): Promise<SavedCampaign[]> {
   if (!supabase || !userId) return local;
   const { data, error } = await supabase
     .from('outbound_campaigns')
-    .select('id,name,mode,config,source_columns,source_data,updated_at')
+    .select('id,name,mode,config,source_columns,source_data,updated_at,folder_id')
     .order('updated_at', { ascending: false });
   if (error) throw error;
   const cloud = (data ?? []).map((row) => ({
@@ -52,6 +52,7 @@ export async function listCampaigns(userId?: string): Promise<SavedCampaign[]> {
     contacts: row.source_data ?? [],
     updatedAt: row.updated_at,
     cloud: true,
+    folderId: row.folder_id ?? null,
   })) as SavedCampaign[];
   return [...cloud, ...local.filter((item) => !cloud.some((cloudItem) => cloudItem.id === item.id))];
 }
@@ -73,6 +74,7 @@ export async function saveCampaign(config: StudioConfig, columns: string[], cont
     contacts: durableContacts,
     updatedAt: new Date().toISOString(),
     cloud: false,
+    folderId: existing?.folderId ?? null,
   };
   const nextLocal = [record, ...local.filter((item) => item.id !== record.id)].slice(0, 30);
   try {
@@ -125,6 +127,7 @@ function asSavedTemplate(item: SavedTemplate | StudioConfig, cloud = false): Sav
       config: { ...record.config, templateId: record.id || record.config.templateId },
       updatedAt: record.updatedAt || new Date().toISOString(),
       cloud: record.cloud ?? cloud,
+      folderId: record.folderId ?? null,
     };
   }
   const config = item as StudioConfig;
@@ -137,6 +140,7 @@ function asSavedTemplate(item: SavedTemplate | StudioConfig, cloud = false): Sav
     config: { ...config, templateId: id },
     updatedAt: new Date().toISOString(),
     cloud,
+    folderId: null,
   };
 }
 
@@ -148,7 +152,9 @@ export function saveLocalTemplate(config: StudioConfig, userId?: string) {
   const record = asSavedTemplate({ ...config, templateId: config.templateId || crypto.randomUUID() });
   if (!record) return;
   const current = listLocalTemplates(userId);
-  writeLocalTemplates([record, ...current.filter((item) => item.id !== record.id)], userId);
+  const previous = current.find((item) => item.id === record.id);
+  const next = { ...record, folderId: previous?.folderId ?? record.folderId ?? null };
+  writeLocalTemplates([next, ...current.filter((item) => item.id !== record.id)], userId);
 }
 
 export function listLocalTemplates(userId?: string): SavedTemplate[] {
@@ -374,7 +380,7 @@ export async function listTemplateConfigs(userId?: string): Promise<SavedTemplat
   if (!supabase || !userId) return local;
   const { data, error } = await supabase
     .from('outbound_templates')
-    .select('id,name,mode,metadata,updated_at')
+    .select('id,name,mode,metadata,updated_at,folder_id')
     .order('updated_at', { ascending: false })
     .limit(80);
   if (error) return local;
@@ -386,6 +392,7 @@ export async function listTemplateConfigs(userId?: string): Promise<SavedTemplat
       config: { ...(row.metadata?.config as StudioConfig | undefined), templateId: row.id, mode: row.mode, campaignName: row.name || row.metadata?.config?.campaignName },
       updatedAt: row.updated_at,
       cloud: true,
+      folderId: row.folder_id ?? null,
     } as SavedTemplate, true))
     .filter((item): item is SavedTemplate => Boolean(item));
   return [...cloud, ...local.filter((item) => !cloud.some((cloudItem) => cloudItem.id === item.id))];
@@ -645,6 +652,93 @@ export async function moveStoredFile(fileId: string, folderId: string | null, us
   if (!supabase || !userId) return { syncError: 'Sign in to move a file in Supabase.' };
   const { error } = await supabase.from('outbound_assets').update({ folder_id: folderId }).eq('id', fileId).eq('user_id', userId);
   if (error) return { syncError: error.message };
+  return {};
+}
+
+function patchLocalCampaign(userId: string | undefined, id: string, patch: (item: SavedCampaign) => SavedCampaign) {
+  const storageKey = userKey(LOCAL_CAMPAIGNS, userId);
+  const local = readJson<SavedCampaign[]>(storageKey, []);
+  if (!local.some((item) => item.id === id)) return;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(local.map((item) => (item.id === id ? patch(item) : item))));
+  } catch {
+    // The Supabase row already has the new name or folder.
+  }
+}
+
+export async function renameTemplateConfig(template: SavedTemplate, name: string, userId?: string): Promise<{ syncError?: string }> {
+  const cleaned = cleanLibraryName(name, 120);
+  if (!cleaned) return { syncError: 'Give it a name.' };
+  if (supabase && userId) {
+    const row = await supabase.from('outbound_templates').select('metadata').eq('id', template.id).eq('user_id', userId).maybeSingle();
+    if (row.error) return { syncError: row.error.message };
+    const metadata = row.data?.metadata && typeof row.data.metadata === 'object' ? { ...row.data.metadata } : {};
+    const previous = metadata.config && typeof metadata.config === 'object' ? metadata.config as StudioConfig : template.config;
+    const updated = await supabase
+      .from('outbound_templates')
+      .update({ name: cleaned, metadata: { ...metadata, config: { ...previous, campaignName: cleaned, templateId: template.id } } })
+      .eq('id', template.id)
+      .eq('user_id', userId);
+    if (updated.error) return { syncError: updated.error.message };
+  }
+  try {
+    const current = listLocalTemplates(userId);
+    writeLocalTemplates(current.map((item) => (
+      item.id === template.id
+        ? { ...item, name: cleaned, config: { ...item.config, campaignName: cleaned }, updatedAt: new Date().toISOString() }
+        : item
+    )), userId);
+  } catch {
+    // The Supabase row already has the new name.
+  }
+  return {};
+}
+
+export async function moveTemplateConfig(templateId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+  if (!supabase || !userId) return { syncError: 'Sign in to move a template in Supabase.' };
+  const { error } = await supabase.from('outbound_templates').update({ folder_id: folderId }).eq('id', templateId).eq('user_id', userId);
+  if (error) return { syncError: error.message };
+  try {
+    const current = listLocalTemplates(userId);
+    writeLocalTemplates(current.map((item) => (item.id === templateId ? { ...item, folderId } : item)), userId);
+  } catch {
+    // The Supabase row already has the new folder.
+  }
+  return {};
+}
+
+export async function renameCampaign(campaign: SavedCampaign, name: string, userId?: string): Promise<{ syncError?: string }> {
+  const cleaned = cleanLibraryName(name, 120);
+  if (!cleaned) return { syncError: 'Give it a name.' };
+  if (supabase && userId) {
+    const row = await supabase.from('outbound_campaigns').select('config').eq('id', campaign.id).eq('user_id', userId).maybeSingle();
+    if (row.error) return { syncError: row.error.message };
+    const previous = row.data?.config && typeof row.data.config === 'object' ? row.data.config as StudioConfig : campaign.config;
+    const updated = await supabase
+      .from('outbound_campaigns')
+      .update({
+        name: cleaned,
+        config: { ...previous, campaignName: cleaned, id: campaign.id },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', campaign.id)
+      .eq('user_id', userId);
+    if (updated.error) return { syncError: updated.error.message };
+  }
+  patchLocalCampaign(userId, campaign.id, (item) => ({
+    ...item,
+    name: cleaned,
+    config: { ...item.config, campaignName: cleaned },
+    updatedAt: new Date().toISOString(),
+  }));
+  return {};
+}
+
+export async function moveCampaign(campaignId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+  if (!supabase || !userId) return { syncError: 'Sign in to move a campaign in Supabase.' };
+  const { error } = await supabase.from('outbound_campaigns').update({ folder_id: folderId }).eq('id', campaignId).eq('user_id', userId);
+  if (error) return { syncError: error.message };
+  patchLocalCampaign(userId, campaignId, (item) => ({ ...item, folderId }));
   return {};
 }
 

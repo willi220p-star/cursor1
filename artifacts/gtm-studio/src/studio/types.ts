@@ -471,6 +471,7 @@ export type SavedTemplate = {
   config: StudioConfig;
   updatedAt: string;
   cloud: boolean;
+  folderId?: string | null;
 };
 
 export type GeneratedAsset = {
@@ -500,4 +501,5 @@ export type SavedCampaign = {
   updatedAt: string;
   cloud: boolean;
   syncError?: string;
+  folderId?: string | null;
 };
