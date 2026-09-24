@@ -1977,28 +1977,53 @@ export function StudioGenerator({
         <Section title={avatarMode ? 'Letter copy' : 'Note copy'}>
           {mode === 'handwritten' && (
             <>
-              <div className="copy-template-row">
-                <FieldRow id="copy-template-name" label="Name">
-                  <input
-                    id="copy-template-name"
-                    className="field"
-                    value={copyTemplateName}
-                    maxLength={80}
-                    placeholder="Follow-up"
-                    onChange={(event) => setCopyTemplateName(event.target.value)}
-                  />
-                </FieldRow>
-                <FieldRow id="copy-template-body" label="Copy">
-                  <textarea
-                    id="copy-template-body"
-                    className="field"
-                    rows={4}
-                    value={copyTemplateBody}
-                    maxLength={8000}
-                    placeholder="Hi {first_name}, …"
-                    onChange={(event) => setCopyTemplateBody(event.target.value)}
-                  />
-                </FieldRow>
+              <div className="copy-template-table">
+                <table>
+                  <caption className="sr-only">Message templates</caption>
+                  <thead>
+                    <tr>
+                      <th id="copy-template-name-label" scope="col">Name</th>
+                      <th id="copy-template-body-label" scope="col">Copy</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="is-draft">
+                      <td>
+                        <input
+                          id="copy-template-name"
+                          className="field"
+                          aria-labelledby="copy-template-name-label"
+                          value={copyTemplateName}
+                          maxLength={80}
+                          placeholder="Follow-up"
+                          onChange={(event) => setCopyTemplateName(event.target.value)}
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          id="copy-template-body"
+                          className="field"
+                          aria-labelledby="copy-template-body-label"
+                          rows={3}
+                          value={copyTemplateBody}
+                          maxLength={8000}
+                          placeholder="Hi {first_name}, …"
+                          onChange={(event) => setCopyTemplateBody(event.target.value)}
+                        />
+                      </td>
+                    </tr>
+                    {copyTemplates.map((item) => (
+                      <tr
+                        key={item.id}
+                        className={item.id === selectedCopyTemplateId ? 'is-selected' : undefined}
+                        onClick={() => applyCopyTemplate(item.id)}
+                      >
+                        <td>{item.name}</td>
+                        <td title={item.body}><span className="copy-template-saved">{item.body}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               <button
                 type="button"
