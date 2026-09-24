@@ -1,4 +1,4 @@
-import { Check, CircleX, Download, RotateCcw, Sparkles, TriangleAlert } from 'lucide-react';
+import { Check, CircleX, Download, RotateCcw, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { GeneratedAsset } from '@/studio/types';
@@ -24,6 +24,7 @@ export function BatchReview({
   onDownloadSelected,
   onCompress,
   onRetry,
+  onDelete,
 }: {
   assets: GeneratedAsset[];
   animatedExport: boolean;
@@ -34,6 +35,7 @@ export function BatchReview({
   onDownloadSelected: () => void;
   onCompress: () => void;
   onRetry: (asset: GeneratedAsset) => void;
+  onDelete: (asset: GeneratedAsset) => void;
 }) {
   const selected = assets.filter((asset) => asset.selected && asset.status !== 'failed');
   const warnings = assets.filter((asset) => asset.status === 'warning').length;
@@ -101,6 +103,9 @@ export function BatchReview({
                 {asset.uploadStatus === 'failed' && <p className="text-sm text-destructive">{asset.uploadError || 'Upload failed.'}</p>}
                 <button type="button" className="btn btn-quiet w-full" onClick={() => onDownloadAsset(asset)} disabled={!asset.blob.size}>
                   <Download size={16} aria-hidden /> Download this row
+                </button>
+                <button type="button" className="btn btn-danger w-full" onClick={() => onDelete(asset)} aria-label={`Delete ${asset.filename}`}>
+                  <Trash2 size={16} aria-hidden /> Delete
                 </button>
               </div>
             </li>

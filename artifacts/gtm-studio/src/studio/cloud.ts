@@ -391,6 +391,205 @@ export async function listTemplateConfigs(userId?: string): Promise<SavedTemplat
   return [...cloud, ...local.filter((item) => !cloud.some((cloudItem) => cloudItem.id === item.id))];
 }
 
+const CONFIG_FILE_MARKER = '/storage/v1/object/public/outbound-assets/';
+
+function collectStoragePaths(value: unknown, into: Set<string>, depth = 0) {
+  if (depth > 8 || value == null) return;
+  if (typeof value === 'string') {
+    if (!value.includes(CONFIG_FILE_MARKER)) return;
+    const path = storagePathFromPublicUrl(value);
+    if (path) into.add(path);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStoragePaths(item, into, depth + 1);
+    return;
+  }
+  if (typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) collectStoragePaths(item, into, depth + 1);
+  }
+}
+
+function clearPendingLoad(prefix: string, id: string, userId?: string) {
+  const key = `${prefix}:${userId ?? ANONYMOUS_SCOPE}`;
+  try {
+    const pending = JSON.parse(localStorage.getItem(key) || '') as { id?: string };
+    if (pending?.id === id) localStorage.removeItem(key);
+  } catch {
+    // A stale hand-off key should not block the delete.
+  }
+}
+
+async function pathsUsedByOthers(paths: string[], except: { templateId?: string; campaignId?: string }) {
+  const wanted = new Set(paths);
+  const used = new Set<string>();
+  if (!supabase || !wanted.size) return { used, failed: false as const };
+  const mark = (path: string | null | undefined) => {
+    if (path && wanted.has(path)) used.add(path);
+  };
+  const templates = await supabase.from('outbound_templates').select('id,storage_path,metadata');
+  if (templates.error) return { used: wanted, failed: true as const };
+  for (const row of templates.data ?? []) {
+    if (except.templateId && row.id === except.templateId) continue;
+    mark(typeof row.storage_path === 'string' ? row.storage_path : null);
+    const config = row.metadata && typeof row.metadata === 'object' ? (row.metadata as { config?: unknown }).config : undefined;
+    const found = new Set<string>();
+    collectStoragePaths(config, found);
+    found.forEach((path) => mark(path));
+  }
+  const campaigns = await supabase.from('outbound_campaigns').select('id,config');
+  if (campaigns.error) return { used: wanted, failed: true as const };
+  const liveCampaigns = new Set<string>();
+  for (const row of campaigns.data ?? []) {
+    if (except.campaignId && row.id === except.campaignId) continue;
+    liveCampaigns.add(row.id);
+    const found = new Set<string>();
+    collectStoragePaths(row.config, found);
+    found.forEach((path) => mark(path));
+  }
+  const list = [...wanted];
+  for (let index = 0; index < list.length; index += 40) {
+    const slice = list.slice(index, index + 40);
+    const assets = await supabase.from('outbound_assets').select('storage_path,campaign_id').in('storage_path', slice);
+    if (assets.error) return { used: wanted, failed: true as const };
+    for (const row of assets.data ?? []) {
+      if (!row.campaign_id || row.campaign_id === except.campaignId) continue;
+      if (!liveCampaigns.has(row.campaign_id)) continue;
+      mark(row.storage_path);
+    }
+  }
+  return { used, failed: false as const };
+}
+
+async function deleteStoragePaths(paths: string[]) {
+  if (!supabase || !paths.length) return null;
+  for (let index = 0; index < paths.length; index += 50) {
+    const slice = paths.slice(index, index + 50);
+    const removed = await supabase.storage.from(ASSET_BUCKET).remove(slice);
+    if (removed.error) return removed.error.message;
+    const deleted = await supabase.from('outbound_assets').delete().in('storage_path', slice);
+    if (deleted.error) return deleted.error.message;
+  }
+  return null;
+}
+
+function ownedPaths(paths: Iterable<string>, userId: string, used: Set<string>) {
+  return [...new Set(paths)].filter((path) => path.startsWith(`${userId}/`) && !used.has(path));
+}
+
+export async function removeTemplateConfig(template: SavedTemplate, userId?: string): Promise<{ syncError?: string }> {
+  if (supabase && userId) {
+    const row = await supabase
+      .from('outbound_templates')
+      .select('id,storage_path,metadata')
+      .eq('id', template.id)
+      .maybeSingle();
+    if (row.error) return { syncError: row.error.message };
+    const paths = new Set<string>();
+    if (typeof row.data?.storage_path === 'string') paths.add(row.data.storage_path);
+    const config = row.data?.metadata && typeof row.data.metadata === 'object'
+      ? (row.data.metadata as { config?: unknown }).config
+      : template.config;
+    collectStoragePaths(config ?? template.config, paths);
+    const shared = await pathsUsedByOthers([...paths], { templateId: template.id });
+    const stored = await deleteStoragePaths(ownedPaths(paths, userId, shared.used));
+    if (stored) return { syncError: stored };
+    const deleted = await supabase.from('outbound_templates').delete().eq('id', template.id).eq('user_id', userId);
+    if (deleted.error) return { syncError: deleted.error.message };
+  }
+  try {
+    writeLocalTemplates(listLocalTemplates(userId).filter((item) => item.id !== template.id), userId);
+  } catch {
+    // The Supabase row is already gone.
+  }
+  clearPendingLoad('gtm-studio-load-template', template.id, userId);
+  return {};
+}
+
+export async function removeCampaign(campaign: SavedCampaign, userId?: string): Promise<{ syncError?: string }> {
+  if (supabase && userId) {
+    const assets = await supabase.from('outbound_assets').select('storage_path').eq('campaign_id', campaign.id);
+    if (assets.error) return { syncError: assets.error.message };
+    const paths = new Set<string>();
+    for (const row of assets.data ?? []) {
+      if (typeof row.storage_path === 'string') paths.add(row.storage_path);
+    }
+    collectStoragePaths(campaign.config, paths);
+    collectStoragePaths(campaign.contacts, paths);
+    const shared = await pathsUsedByOthers([...paths], { campaignId: campaign.id });
+    const stored = await deleteStoragePaths(ownedPaths(paths, userId, shared.used));
+    if (stored) return { syncError: stored };
+    const deleted = await supabase.from('outbound_campaigns').delete().eq('id', campaign.id).eq('user_id', userId);
+    if (deleted.error) return { syncError: deleted.error.message };
+  }
+  const storageKey = userKey(LOCAL_CAMPAIGNS, userId);
+  const local = readJson<SavedCampaign[]>(storageKey, []);
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(local.filter((item) => item.id !== campaign.id)));
+  } catch {
+    // The Supabase row is already gone.
+  }
+  clearPendingLoad('gtm-studio-load-campaign', campaign.id, userId);
+  return {};
+}
+
+export type StoredFile = {
+  id: string;
+  filename: string;
+  publicUrl: string;
+  storagePath: string;
+  bytes: number;
+  label: string;
+  createdAt: string;
+};
+
+function storedFileLabel(metadata: { kind?: string; role?: string } | null, filename: string) {
+  const kind = metadata?.kind;
+  if (kind === 'list') return 'Imported list';
+  if (kind === 'desk') return 'Desk photo';
+  if (kind === 'paper') return 'Paper photo';
+  if (kind === 'signature') return 'Signature';
+  if (kind === 'gif') return 'GIF';
+  if (metadata?.role === 'generated') return 'Generated image';
+  if (/\.(csv|xlsx|xls|ods|tsv|txt)$/i.test(filename)) return 'Imported list';
+  return 'File';
+}
+
+export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
+  if (!supabase || !userId) return [];
+  const { data, error } = await supabase
+    .from('outbound_assets')
+    .select('id,filename,public_url,storage_path,bytes,metadata,created_at')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(400);
+  if (error || !data) return [];
+  return data.map((row) => ({
+    id: row.id,
+    filename: row.filename,
+    publicUrl: row.public_url,
+    storagePath: row.storage_path,
+    bytes: row.bytes ?? 0,
+    label: storedFileLabel((row.metadata ?? null) as { kind?: string; role?: string } | null, row.filename),
+    createdAt: row.created_at,
+  }));
+}
+
+export async function removeStoredFile(
+  file: { storagePath?: string; publicUrl?: string },
+  userId?: string,
+): Promise<{ syncError?: string }> {
+  const path = file.storagePath || storagePathFromPublicUrl(file.publicUrl);
+  if (!path) return {};
+  if (!supabase || !userId) return { syncError: 'Sign in to delete files from Supabase.' };
+  if (!path.startsWith(`${userId}/`)) return { syncError: 'That file is outside your Supabase folder.' };
+  const removed = await supabase.storage.from(ASSET_BUCKET).remove([path]);
+  if (removed.error) return { syncError: removed.error.message };
+  const deleted = await supabase.from('outbound_assets').delete().eq('storage_path', path);
+  if (deleted.error) return { syncError: deleted.error.message };
+  return {};
+}
+
 export function subscribeTemplateChanges(userId: string | undefined, onChange: () => void) {
   const onFocus = () => onChange();
   window.addEventListener('focus', onFocus);

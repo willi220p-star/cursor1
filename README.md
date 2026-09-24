@@ -70,7 +70,8 @@ Upgrade later only if you outgrow free auth or storage quotas.
 - Remove any uploaded paper, desk, signature, or meme background image
 - Moving memes and GIFs use original copyright-safe photographs in the familiar layouts from [50 Copyright-Safe Meme Templates](https://shlomo-genchin.notion.site/50-Copyright-Safe-Meme-Templates-66a71bb3274a42bda72859dfa2be8a5f) — two buttons, looking away, table sign, expanding boxes, trade offer, and more — plus Add live GIF from your computer
 - Download this row, or download all rows as a ZIP with `prospects.csv` and an Airtable-ready manifest
-- Campaigns save locally and sync to Supabase when you are signed in
+- Campaigns save locally and sync to Supabase when you are signed in. Delete on the desk removes that campaign, and its imported list and generated files, from Supabase as well.
+- Saved studio looks can be deleted from the desk or from Saved templates inside a studio. Delete removes that look from Supabase. Created files (imported spreadsheets, paper and desk photos, signatures, GIFs, and generated images) are listed on the desk and can be deleted one by one.
 
 ## Layout
 

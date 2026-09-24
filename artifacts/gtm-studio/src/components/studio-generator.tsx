@@ -75,7 +75,9 @@ import {
   peekLocalCampaign,
   persistImportedList,
   persistStudioImage,
+  removeStoredFile,
   removeStoredImage,
+  removeTemplateConfig,
   saveCampaign,
   saveTemplateConfig,
   subscribeTemplateChanges,
@@ -308,6 +310,7 @@ export function StudioGenerator({
   const [slowPreview, setSlowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
+  const [deletingTemplateId, setDeletingTemplateId] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
@@ -435,7 +438,7 @@ export function StudioGenerator({
         setConfig((current) => {
           if (!current.templateId) return current;
           const match = next.find((item) => item.id === current.templateId && item.mode === mode);
-          if (!match) return current;
+          if (!match) return { ...current, templateId: undefined };
           const previous = templateStamp.current[match.id];
           templateStamp.current[match.id] = match.updatedAt;
           if (!previous || previous === match.updatedAt) return current;
@@ -1128,6 +1131,23 @@ export function StudioGenerator({
     toast(`${template.name} loaded`);
   };
 
+  const deleteSavedTemplate = async (template: SavedTemplate) => {
+    if (deletingTemplateId) return;
+    if (!window.confirm(`Delete “${template.name}”? It will be removed from this studio and from Supabase.`)) return;
+    setDeletingTemplateId(template.id);
+    try {
+      const result = await removeTemplateConfig(template, userId);
+      setConfig((current) => (current.templateId === template.id ? { ...current, templateId: undefined } : current));
+      setSavedTemplates(await listTemplateConfigs(userId));
+      if (result.syncError) setError(`Could not delete that template from Supabase: ${result.syncError}`);
+      else toast.success(`${template.name} deleted`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not delete that template.');
+    } finally {
+      setDeletingTemplateId(null);
+    }
+  };
+
   const duplicateTemplate = async (template: SavedTemplate) => {
     try {
       const saved = await copyTemplateConfig(template, userId);
@@ -1551,6 +1571,22 @@ export function StudioGenerator({
     toast.success(`Downloaded ${exported.filename}`, {
       description: 'Original columns plus generated file names and links.',
     });
+  };
+
+  const deleteAsset = async (asset: GeneratedAsset) => {
+    const label = asset.filename || `row ${asset.row}`;
+    const where = asset.publicUrl ? 'from this review and from Supabase' : 'from this review';
+    if (!window.confirm(`Delete “${label}” ${where}?`)) return;
+    if (asset.publicUrl) {
+      const result = await removeStoredFile({ publicUrl: asset.publicUrl }, userId);
+      if (result.syncError) {
+        setError(`Could not delete that file from Supabase: ${result.syncError}`);
+        return;
+      }
+    }
+    if (asset.url.startsWith('blob:')) URL.revokeObjectURL(asset.url);
+    setAssets((current) => current.filter((item) => item.id !== asset.id));
+    toast.success(`${label} deleted`);
   };
 
   const downloadAsset = async (asset: GeneratedAsset) => {
@@ -2361,7 +2397,7 @@ export function StudioGenerator({
           Generate writes {outputColumnNames(mode).slice(0, 2).map((column) => `{${column}}`).join(' and ')} onto every row of the imported spreadsheet, uploads the files to Supabase, and includes that updated CSV in the ZIP.
         </p>
       </Section>
-      <Section title="Saved templates" hint="Each studio keeps its own library in Supabase. Edit a row there and it appears here on the next refresh.">
+      <Section title="Saved templates" hint="Each studio keeps its own library in Supabase. Delete removes that look here and in Supabase.">
         {templatesForMode.length ? templatesForMode.map((item) => (
           <div key={item.id} className="flex items-center gap-2">
             <button type="button" onClick={() => loadTemplate(item)} className="template-row min-w-0 flex-1">
@@ -2373,6 +2409,15 @@ export function StudioGenerator({
             </button>
             <button type="button" className="btn btn-quiet btn-icon" aria-label={`Copy ${item.name}`} onClick={() => void duplicateTemplate(item)}>
               <Copy size={16} aria-hidden />
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger btn-icon"
+              aria-label={`Delete ${item.name}`}
+              disabled={deletingTemplateId === item.id}
+              onClick={() => void deleteSavedTemplate(item)}
+            >
+              <Trash2 size={16} aria-hidden />
             </button>
           </div>
         )) : (
@@ -2708,6 +2753,7 @@ export function StudioGenerator({
                 onDownloadSelected={downloadZip}
                 onCompress={compressWarnings}
                 onRetry={retryAsset}
+                onDelete={(asset) => void deleteAsset(asset)}
               />
             ) : (
               <p className="helper">Generate first, then every image for this studio appears here.</p>
