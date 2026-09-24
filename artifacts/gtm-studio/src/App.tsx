@@ -87,10 +87,18 @@ function ModeIcon({ mode, size = 20 }: { mode: StudioMode; size?: number }) {
   return <Film size={size} aria-hidden />;
 }
 
-function LogoMark() {
+function LogoMark({ wordmark = false }: { wordmark?: boolean }) {
   return (
-    <Link href="/" aria-label="Outbound Studio home" className="flex h-10 w-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-      <PenLine size={20} strokeWidth={2} aria-hidden />
+    <Link href="/" aria-label="Outbound Studio home" className={wordmark ? 'rail-brand' : 'logo-mark'}>
+      <span className="logo-glyph">
+        <PenLine size={18} strokeWidth={2.25} aria-hidden />
+      </span>
+      {wordmark && (
+        <span className="rail-brand-copy">
+          <span className="rail-kicker">DGK</span>
+          <span className="display">Outbound</span>
+        </span>
+      )}
     </Link>
   );
 }
@@ -137,10 +145,10 @@ function Shell({ children, user }: { children: ReactNode; user: User }) {
   const title = pageTitles[location] ?? 'Not found';
   const TitleTag = ownHeading.has(location) ? 'p' : 'h1';
   return (
-    <div className="shell-frame bg-background">
+    <div className="shell-frame">
       <a href="#main" className="skip-link">Skip to content</a>
-      <aside className="studio-rail icon-rail fixed inset-y-0 left-0 z-40 hidden flex-col px-2 py-4 md:flex" aria-label="Sidebar">
-        <div className="flex justify-center"><LogoMark /></div>
+      <aside className="studio-rail icon-rail fixed inset-y-0 left-0 z-40 hidden flex-col md:flex" aria-label="Sidebar">
+        <LogoMark wordmark />
         <RailNav location={location} email={email} />
       </aside>
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -156,7 +164,7 @@ function Shell({ children, user }: { children: ReactNode; user: User }) {
           </div>
         </SheetContent>
       </Sheet>
-      <div className="md:pl-[72px] 2xl:pl-[232px]">
+      <div className="min-w-0 md:pl-[232px]">
         <header className="topbar px-4 md:px-8">
           <div className="flex min-w-0 items-center gap-3">
             <button type="button" aria-label="Open navigation" className="btn btn-ghost btn-icon h-11 w-11 md:hidden" onClick={() => setMobileOpen(true)}><Menu size={20} aria-hidden /></button>
@@ -175,7 +183,7 @@ function Shell({ children, user }: { children: ReactNode; user: User }) {
             </button>
           </div>
         </header>
-        <main id="main" tabIndex={-1} className={location === '/carousel' ? 'app-main w-full outline-none' : 'app-main mx-auto w-full max-w-[1440px] px-4 py-6 outline-none md:px-8'}>{children}</main>
+        <main id="main" tabIndex={-1} className={location === '/carousel' ? 'app-main w-full min-w-0 outline-none' : 'app-main mx-auto w-full min-w-0 max-w-[1440px] px-4 py-6 outline-none md:px-8 md:py-8'}>{children}</main>
       </div>
     </div>
   );
@@ -232,8 +240,9 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   return (
     <div className="animate-rise">
-      <header className="flex flex-col gap-2">
-        <h1 className="display text-[32px] font-semibold leading-[1.15]">{greeting}, {firstName}</h1>
+      <header className="desk-hero flex flex-col gap-2">
+        <p className="eyebrow">DGK Outbound Studio</p>
+        <h1 className="display font-semibold leading-[1.08]">{greeting}, {firstName}</h1>
         <p className="text-base text-muted-foreground">
           {campaigns === null
             ? 'Loading your ledger…'
@@ -242,7 +251,7 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
       </header>
 
       <section aria-labelledby="studios-heading" className="mt-8">
-        <h2 id="studios-heading" className="sr-only">Studios</h2>
+        <h2 id="studios-heading" className="display mb-4 text-2xl font-semibold">Studios</h2>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <StudioCard mode="handwritten" description="Paper, ink slips, ruled lines and a signature that reads as written, not typed." />
           <StudioCard mode="handgif" description="A separate writing GIF — a hand writes the note, then you download the loop." />
@@ -262,7 +271,7 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
 
       <section aria-labelledby="stats-heading" className="mt-8">
         <h2 id="stats-heading" className="sr-only">Workspace numbers</h2>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="stat-board">
           <div className="dash-stat"><span>Saved campaigns</span><strong>{list.length}</strong><small>{supabaseConfigured ? 'Cloud and this browser' : 'This browser'}</small></div>
           <div className="dash-stat"><span>Prospect rows</span><strong>{contactCount}</strong><small>Across saved campaigns</small></div>
           <div className="dash-stat"><span>Assets exported (30 d)</span><strong>{exported}</strong><small>Rows and ZIPs from this browser</small></div>
@@ -279,9 +288,9 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
             </div>
             <span className="mono text-sm text-muted-foreground">{templates.length} saved · edits in Supabase show here</span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {templates.slice(0, 8).map((template) => (
-              <button key={template.id} type="button" className="panel p-4 text-left transition-colors hover:border-input" onClick={() => openTemplate(template)}>
+              <button key={template.id} type="button" className="panel w-full min-w-0 p-4 text-left transition-colors hover:border-input" onClick={() => openTemplate(template)}>
                 <span className="flex items-center gap-3">
                   <span className="icon-disc"><ModeIcon mode={template.mode} size={16} /></span>
                   <span className="min-w-0">

@@ -2363,10 +2363,10 @@ export function StudioGenerator({
 
   const inspector = (
     <Tabs value={deskTab} onValueChange={(value) => setDeskTab(value as DeskTab)} className="flex min-h-0 flex-1 flex-col">
-      <TabsList className="inspector-tabs grid h-11 w-full grid-cols-3 rounded-none bg-transparent p-0 px-5 text-muted-foreground" aria-label="Studio controls">
-        <TabsPrimitive.Trigger value="copy" className="inspector-tab h-11 rounded-none px-0 text-sm font-semibold data-[state=active]:bg-transparent data-[state=active]:text-primary"><Type size={16} aria-hidden /> Copy</TabsPrimitive.Trigger>
-        <TabsPrimitive.Trigger value="look" className="inspector-tab h-11 rounded-none px-0 text-sm font-semibold data-[state=active]:bg-transparent data-[state=active]:text-primary"><Palette size={16} aria-hidden /> Look</TabsPrimitive.Trigger>
-        <TabsPrimitive.Trigger value="ship" className="inspector-tab h-11 rounded-none px-0 text-sm font-semibold data-[state=active]:bg-transparent data-[state=active]:text-primary"><Send size={16} aria-hidden /> Ship</TabsPrimitive.Trigger>
+      <TabsList className="inspector-tabs grid h-auto w-full grid-cols-3 bg-surface-2 p-1" aria-label="Studio controls">
+        <TabsPrimitive.Trigger value="copy" className="inspector-tab"><Type size={16} aria-hidden /> Copy</TabsPrimitive.Trigger>
+        <TabsPrimitive.Trigger value="look" className="inspector-tab"><Palette size={16} aria-hidden /> Look</TabsPrimitive.Trigger>
+        <TabsPrimitive.Trigger value="ship" className="inspector-tab"><Send size={16} aria-hidden /> Ship</TabsPrimitive.Trigger>
       </TabsList>
       <div className="ink-well-scroll min-h-0 flex-1">
         <TabsContent value="copy" className="mt-0">{copyTab}</TabsContent>
