@@ -658,7 +658,6 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .hand-option:hover { border-color: var(--primary); background: var(--accent); }
 .hand-option.is-active { border-color: var(--primary); background: var(--accent); color: var(--primary); }
 .copy-template-table {
-  max-height: 280px;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -689,18 +688,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
   vertical-align: top;
   word-break: break-word;
 }
-.copy-template-table tr.is-draft td { background: var(--card); }
-.copy-template-table tr:not(.is-draft) { cursor: pointer; }
-.copy-template-table tr:not(.is-draft):hover td { background: var(--surface-2); }
-.copy-template-table tr.is-selected td { background: var(--accent); }
 .copy-template-table .field { width: 100%; min-width: 0; }
-.copy-template-saved {
-  display: block;
-  max-height: 4.8em;
-  overflow: auto;
-  white-space: pre-wrap;
-  line-height: 1.4;
-}
 .writing-style-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .writing-style {
   display: flex;

@@ -1979,7 +1979,7 @@ export function StudioGenerator({
             <>
               <div className="copy-template-table">
                 <table>
-                  <caption className="sr-only">Message templates</caption>
+                  <caption className="sr-only">New message template</caption>
                   <thead>
                     <tr>
                       <th id="copy-template-name-label" scope="col">Name</th>
@@ -1987,7 +1987,7 @@ export function StudioGenerator({
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="is-draft">
+                    <tr>
                       <td>
                         <input
                           id="copy-template-name"
@@ -2012,16 +2012,6 @@ export function StudioGenerator({
                         />
                       </td>
                     </tr>
-                    {copyTemplates.map((item) => (
-                      <tr
-                        key={item.id}
-                        className={item.id === selectedCopyTemplateId ? 'is-selected' : undefined}
-                        onClick={() => applyCopyTemplate(item.id)}
-                      >
-                        <td>{item.name}</td>
-                        <td title={item.body}><span className="copy-template-saved">{item.body}</span></td>
-                      </tr>
-                    ))}
                   </tbody>
                 </table>
               </div>
