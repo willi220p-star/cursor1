@@ -40,7 +40,8 @@ import { StudioGenerator } from '@/components/studio-generator';
 import { CarouselGeneratorPage } from '@/carousel/page';
 import { exportsInLast30Days, relativeTime, requestSampleList } from '@/studio/activity';
 import { getCurrentSession, onAuthChange, signOutUser } from '@/studio/auth';
-import { listCampaigns, listStoredFiles, listTemplateConfigs, removeCampaign, removeStoredFile, removeTemplateConfig, supabaseConfigured, subscribeTemplateChanges, type StoredFile } from '@/studio/cloud';
+import { CreatedFiles } from '@/components/studio/created-files';
+import { listCampaigns, listTemplateConfigs, removeCampaign, removeTemplateConfig, supabaseConfigured, subscribeTemplateChanges } from '@/studio/cloud';
 import type { SavedCampaign, SavedTemplate, StudioMode } from '@/studio/types';
 
 const queryClient = new QueryClient();
@@ -209,13 +210,13 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
   const scope = userId ?? 'anonymous';
   const [campaigns, setCampaigns] = useState<SavedCampaign[] | null>(null);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
-  const [files, setFiles] = useState<StoredFile[] | null>(null);
+  const [libraryRevision, setLibraryRevision] = useState(0);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [sortDesc, setSortDesc] = useState(true);
   const refreshDesk = () => {
     listCampaigns(userId).then(setCampaigns).catch(() => setCampaigns([]));
     listTemplateConfigs(userId).then(setTemplates).catch(() => setTemplates([]));
-    listStoredFiles(userId).then(setFiles).catch(() => setFiles([]));
+    setLibraryRevision((value) => value + 1);
   };
   useEffect(() => {
     refreshDesk();
@@ -248,21 +249,6 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
       else toast.success(`${campaign.name} deleted`);
     } catch (reason) {
       toast.error(reason instanceof Error ? reason.message : 'Could not delete that campaign.');
-    } finally {
-      setDeletingId(null);
-    }
-  };
-  const deleteFile = async (file: StoredFile) => {
-    if (deletingId) return;
-    if (!window.confirm(`Delete “${file.filename}” from Supabase?`)) return;
-    setDeletingId(file.id);
-    try {
-      const result = await removeStoredFile(file, userId);
-      refreshDesk();
-      if (result.syncError) toast.error(`Could not delete ${file.filename}`, { description: result.syncError });
-      else toast.success(`${file.filename} deleted`);
-    } catch (reason) {
-      toast.error(reason instanceof Error ? reason.message : 'Could not delete that file.');
     } finally {
       setDeletingId(null);
     }
@@ -365,54 +351,7 @@ function DeskPage({ userId, email }: { userId?: string; email?: string }) {
         </section>
       )}
 
-      {files && files.length > 0 && (
-        <section aria-labelledby="files-heading" className="mt-10">
-          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="eyebrow">Files</p>
-              <h2 id="files-heading" className="display mt-1 text-2xl font-semibold">Created files</h2>
-            </div>
-            <span className="mono text-sm text-muted-foreground">{files.length} in Supabase</span>
-          </div>
-          <div className="ledger max-h-[420px] overflow-y-auto">
-            <div className="overflow-x-auto">
-              <table>
-                <thead>
-                  <tr>
-                    <th scope="col">File</th>
-                    <th scope="col" className="mobile-hide">Kind</th>
-                    <th scope="col">Added</th>
-                    <th scope="col"><span className="sr-only">Delete</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {files.map((file) => (
-                    <tr key={file.id} className="is-file">
-                      <td>
-                        <span className="block max-w-[280px] truncate font-semibold" title={file.filename}>{file.filename}</span>
-                      </td>
-                      <td className="mobile-hide text-muted-foreground">{file.label}</td>
-                      <td className="text-muted-foreground" title={new Date(file.createdAt).toLocaleString()}>{relativeTime(file.createdAt)}</td>
-                      <td className="text-right">
-                        <button
-                          type="button"
-                          className="btn btn-danger btn-sm"
-                          aria-label={`Delete ${file.filename}`}
-                          data-storage-path={file.storagePath}
-                          disabled={deletingId === file.id}
-                          onClick={() => void deleteFile(file)}
-                        >
-                          <Trash2 size={16} aria-hidden /> Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-      )}
+      <CreatedFiles userId={userId} revision={libraryRevision} />
 
       <section aria-labelledby="ledger-heading" className="mt-10">
         <div className="mb-4 flex flex-wrap items-end justify-between gap-3">

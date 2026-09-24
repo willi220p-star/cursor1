@@ -541,7 +541,23 @@ export type StoredFile = {
   bytes: number;
   label: string;
   createdAt: string;
+  folderId: string | null;
 };
+
+export type FileFolder = {
+  id: string;
+  name: string;
+  createdAt: string;
+};
+
+function cleanLibraryName(value: string, limit = 80) {
+  return value.replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function libraryError(error: { code?: string; message?: string }, fallback: string) {
+  if (error.code === '23505' || /duplicate|unique/i.test(error.message || '')) return 'You already have a folder with that name.';
+  return error.message || fallback;
+}
 
 function storedFileLabel(metadata: { kind?: string; role?: string } | null, filename: string) {
   const kind = metadata?.kind;
@@ -559,7 +575,7 @@ export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
   if (!supabase || !userId) return [];
   const { data, error } = await supabase
     .from('outbound_assets')
-    .select('id,filename,public_url,storage_path,bytes,metadata,created_at')
+    .select('id,filename,public_url,storage_path,bytes,metadata,created_at,folder_id')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(400);
@@ -572,7 +588,64 @@ export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
     bytes: row.bytes ?? 0,
     label: storedFileLabel((row.metadata ?? null) as { kind?: string; role?: string } | null, row.filename),
     createdAt: row.created_at,
+    folderId: row.folder_id ?? null,
   }));
+}
+
+export async function listFileFolders(userId?: string): Promise<FileFolder[]> {
+  if (!supabase || !userId) return [];
+  const { data, error } = await supabase
+    .from('outbound_folders')
+    .select('id,name,created_at')
+    .eq('user_id', userId)
+    .order('name', { ascending: true });
+  if (error || !data) return [];
+  return data.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
+}
+
+export async function createFileFolder(name: string, userId?: string): Promise<{ folder?: FileFolder; syncError?: string }> {
+  const cleaned = cleanLibraryName(name);
+  if (!cleaned) return { syncError: 'Give the folder a name.' };
+  if (!supabase || !userId) return { syncError: 'Sign in to create a folder in Supabase.' };
+  const { data, error } = await supabase
+    .from('outbound_folders')
+    .insert({ user_id: userId, name: cleaned })
+    .select('id,name,created_at')
+    .single();
+  if (error || !data) return { syncError: libraryError(error ?? {}, 'Could not create that folder.') };
+  return { folder: { id: data.id, name: data.name, createdAt: data.created_at } };
+}
+
+export async function renameFileFolder(folderId: string, name: string, userId?: string): Promise<{ syncError?: string }> {
+  const cleaned = cleanLibraryName(name);
+  if (!cleaned) return { syncError: 'Give the folder a name.' };
+  if (!supabase || !userId) return { syncError: 'Sign in to rename a folder in Supabase.' };
+  const { error } = await supabase.from('outbound_folders').update({ name: cleaned }).eq('id', folderId).eq('user_id', userId);
+  if (error) return { syncError: libraryError(error, 'Could not rename that folder.') };
+  return {};
+}
+
+export async function removeFileFolder(folderId: string, userId?: string): Promise<{ syncError?: string }> {
+  if (!supabase || !userId) return { syncError: 'Sign in to delete a folder in Supabase.' };
+  const { error } = await supabase.from('outbound_folders').delete().eq('id', folderId).eq('user_id', userId);
+  if (error) return { syncError: error.message };
+  return {};
+}
+
+export async function renameStoredFile(fileId: string, filename: string, userId?: string): Promise<{ syncError?: string }> {
+  const cleaned = cleanLibraryName(filename, 120);
+  if (!cleaned) return { syncError: 'Give the file a name.' };
+  if (!supabase || !userId) return { syncError: 'Sign in to rename a file in Supabase.' };
+  const { error } = await supabase.from('outbound_assets').update({ filename: cleaned }).eq('id', fileId).eq('user_id', userId);
+  if (error) return { syncError: error.message };
+  return {};
+}
+
+export async function moveStoredFile(fileId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+  if (!supabase || !userId) return { syncError: 'Sign in to move a file in Supabase.' };
+  const { error } = await supabase.from('outbound_assets').update({ folder_id: folderId }).eq('id', fileId).eq('user_id', userId);
+  if (error) return { syncError: error.message };
+  return {};
 }
 
 export async function removeStoredFile(
