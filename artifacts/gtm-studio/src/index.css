@@ -663,7 +663,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
   border-radius: 12px;
   background: var(--card);
 }
-.copy-template-table table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.copy-template-table table { width: 100%; min-width: 260px; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
 .copy-template-table th {
   position: sticky;
   top: 0;

@@ -8,7 +8,7 @@ import { useComponentPrinter } from "@/carousel/lib/hooks/use-component-printer"
 import { RefProvider } from "@/carousel/lib/providers/reference-context";
 import { MainNav } from "./main-nav";
 
-export default function Editor({}: {}) {
+export default function Editor({ userId }: { userId?: string }) {
   const { componentRef, handlePrint, isPrinting } = useComponentPrinter();
 
   return (
@@ -20,7 +20,7 @@ export default function Editor({}: {}) {
           isPrinting={isPrinting}
         />
         <div className="flex-1 flex flex-start  md:grid md:grid-cols-[320px_minmax(0,1fr)] ">
-          <SidebarPanel />
+          <SidebarPanel userId={userId} />
           <SlidesEditor />
         </div>
       </div>

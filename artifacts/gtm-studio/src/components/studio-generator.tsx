@@ -71,21 +71,18 @@ import {
   copyTemplateConfig,
   ensureAssetBlob,
   listStudioAssets,
-  listCopyTemplates,
   listTemplateConfigs,
   peekLocalCampaign,
   persistImportedList,
   persistStudioImage,
   removeStoredImage,
   saveCampaign,
-  removeCopyTemplate,
-  saveCopyTemplate,
   saveTemplateConfig,
   subscribeTemplateChanges,
   supabaseConfigured,
   uploadGeneratedAssets,
-  type CopyTemplate,
 } from '@/studio/cloud';
+import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
 import {
   contactsStorageKey,
   hydratePortraits,
@@ -314,12 +311,6 @@ export function StudioGenerator({
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState('');
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
-  const [copyTemplates, setCopyTemplates] = useState<CopyTemplate[]>([]);
-  const [copyTemplateName, setCopyTemplateName] = useState('');
-  const [copyTemplateBody, setCopyTemplateBody] = useState('');
-  const [selectedCopyTemplateId, setSelectedCopyTemplateId] = useState('');
-  const [savingCopyTemplate, setSavingCopyTemplate] = useState(false);
-  const [removingCopyTemplate, setRemovingCopyTemplate] = useState(false);
   const [libraryMemes, setLibraryMemes] = useState<MemeSample[]>([]);
   const [listOpen, setListOpen] = useState(false);
   const [listStep, setListStep] = useState<ImportStep>('source');
@@ -460,67 +451,6 @@ export function StudioGenerator({
     return subscribeTemplateChanges(userId, refreshTemplates);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, mode]);
-
-  useEffect(() => {
-    if (mode !== 'handwritten') return;
-    let cancelled = false;
-    listCopyTemplates(userId)
-      .then((rows) => {
-        if (!cancelled) setCopyTemplates(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setCopyTemplates([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [mode, userId]);
-
-  const addCopyTemplate = async () => {
-    const name = copyTemplateName.trim();
-    const body = copyTemplateBody.trim();
-    if (!name || !body || savingCopyTemplate) return;
-    setSavingCopyTemplate(true);
-    const result = await saveCopyTemplate(name, body, userId);
-    const rows = await listCopyTemplates(userId);
-    setCopyTemplates(rows);
-    setSelectedCopyTemplateId(result.template.id);
-    setCopyTemplateName('');
-    setCopyTemplateBody('');
-    setSavingCopyTemplate(false);
-    if (result.syncError) {
-      toast('Template kept in this browser', { description: result.syncError });
-      return;
-    }
-    toast(result.template.cloud ? 'Template saved' : 'Template saved in this browser', { description: result.template.name });
-    setAnnouncement(`Template ${result.template.name} saved`);
-  };
-
-  const removeSelectedCopyTemplate = async () => {
-    const match = copyTemplates.find((item) => item.id === selectedCopyTemplateId);
-    if (!match || removingCopyTemplate) return;
-    setRemovingCopyTemplate(true);
-    const result = await removeCopyTemplate(match, userId);
-    const rows = await listCopyTemplates(userId);
-    setRemovingCopyTemplate(false);
-    if (result.syncError) {
-      setCopyTemplates(rows);
-      toast('Template stayed in Supabase', { description: result.syncError });
-      return;
-    }
-    setCopyTemplates(rows.filter((item) => item.id !== match.id && item.name.toLowerCase() !== match.name.toLowerCase()));
-    setSelectedCopyTemplateId('');
-    toast('Template removed', { description: match.name });
-    setAnnouncement(`Template ${match.name} removed`);
-  };
-
-  const applyCopyTemplate = (id: string) => {
-    setSelectedCopyTemplateId(id);
-    const match = copyTemplates.find((item) => item.id === id);
-    if (!match) return;
-    updateConfig('copy', match.body);
-    setAnnouncement(`Template ${match.name} applied`);
-  };
 
   useEffect(() => {
     assetsRef.current = assets;
@@ -1975,85 +1905,16 @@ export function StudioGenerator({
       )}
       {paperMode ? (
         <Section title={avatarMode ? 'Letter copy' : 'Note copy'}>
-          {mode === 'handwritten' && (
-            <>
-              <div className="copy-template-table">
-                <table>
-                  <caption className="sr-only">New message template</caption>
-                  <thead>
-                    <tr>
-                      <th id="copy-template-name-label" scope="col">Name</th>
-                      <th id="copy-template-body-label" scope="col">Copy</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>
-                        <input
-                          id="copy-template-name"
-                          className="field"
-                          aria-labelledby="copy-template-name-label"
-                          value={copyTemplateName}
-                          maxLength={80}
-                          placeholder="Follow-up"
-                          onChange={(event) => setCopyTemplateName(event.target.value)}
-                        />
-                      </td>
-                      <td>
-                        <textarea
-                          id="copy-template-body"
-                          className="field"
-                          aria-labelledby="copy-template-body-label"
-                          rows={3}
-                          value={copyTemplateBody}
-                          maxLength={8000}
-                          placeholder="Hi {first_name}, …"
-                          onChange={(event) => setCopyTemplateBody(event.target.value)}
-                        />
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <button
-                type="button"
-                className="btn btn-quiet"
-                disabled={!copyTemplateName.trim() || !copyTemplateBody.trim()}
-                data-loading={savingCopyTemplate || undefined}
-                aria-busy={savingCopyTemplate || undefined}
-                onClick={() => void addCopyTemplate()}
-              >
-                <Plus size={16} aria-hidden /> Add template
-              </button>
-              <div className="flex items-end gap-2">
-                <div className="min-w-0 flex-1">
-                  <FieldRow id="copy-template-select" label="Select">
-                    <select
-                      id="copy-template-select"
-                      className="field"
-                      value={selectedCopyTemplateId}
-                      onChange={(event) => applyCopyTemplate(event.target.value)}
-                    >
-                      <option value="">{copyTemplates.length ? 'Choose a template' : 'No templates yet'}</option>
-                      {copyTemplates.map((item) => (
-                        <option key={item.id} value={item.id}>{item.name}</option>
-                      ))}
-                    </select>
-                  </FieldRow>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-danger flex-none"
-                  disabled={!selectedCopyTemplateId || removingCopyTemplate}
-                  data-loading={removingCopyTemplate || undefined}
-                  aria-busy={removingCopyTemplate || undefined}
-                  onClick={() => void removeSelectedCopyTemplate()}
-                >
-                  <Trash2 size={16} aria-hidden /> Remove
-                </button>
-              </div>
-            </>
-          )}
+          <CopyTemplateControls
+            studio={mode}
+            userId={userId}
+            hint={mode === 'handgif' ? 'Choosing a template fills the note this hand writes.' : avatarMode ? 'Choosing a template fills the letter.' : 'Choosing a template fills the message.'}
+            onApply={(body, template) => {
+              updateConfig('copy', body);
+              setAnnouncement(`Template ${template.name} applied`);
+            }}
+            onAnnounce={setAnnouncement}
+          />
           <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{config.copy.length} chars · {copyLines} lines</span></span>}>
             <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} />
           </FieldRow>
@@ -2074,6 +1935,16 @@ export function StudioGenerator({
         </Section>
       ) : (
         <Section title="Text layers" hint="Each layer is a movable block on the image. Drag it on the stage or use the Look tab.">
+          <CopyTemplateControls
+            studio={mode}
+            userId={userId}
+            hint="Choosing a template fills the active text layer."
+            onApply={(body, template) => {
+              updateLayer({ text: body });
+              setAnnouncement(`Template ${template.name} applied`);
+            }}
+            onAnnounce={setAnnouncement}
+          />
           <div className="flex flex-wrap items-center gap-2">
             <ToggleGroup type="single" value={activeLayerId} onValueChange={(value) => value && setActiveLayerId(value)} className="flex-wrap justify-start gap-2" aria-label="Text layer">
               {config.layers.map((layer) => (

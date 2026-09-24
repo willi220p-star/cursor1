@@ -19,10 +19,12 @@ import {
   Brush,
   FileDigit,
   LucideIcon,
+  MessageSquare,
   Palette,
   Plus,
   Type,
 } from "lucide-react";
+import { CarouselCopyTemplates } from "@/carousel/components/copy-templates";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Drawer } from "vaul";
 import { DrawerContent, DrawerTrigger } from "@/carousel/components/drawer";
@@ -42,6 +44,11 @@ type TabInfo = {
 };
 
 const ALL_FORMS: Record<string, TabInfo> = {
+  copy: {
+    name: "Copy",
+    value: "copy",
+    icon: MessageSquare,
+  },
   brand: {
     name: "Brand",
     value: "brand",
@@ -64,24 +71,25 @@ const ALL_FORMS: Record<string, TabInfo> = {
   },
 };
 
-export function SidebarPanel({ className }: { className?: string }) {
+export function SidebarPanel({ className, userId }: { className?: string; userId?: string }) {
   const form: DocumentFormReturn = useFormContext();
   const { currentSelection } = useSelectionContext();
+  const [formsOpen, setFormsOpen] = useState(false);
 
   return (
     <div className={cn("h-full flex flex-1", className)}>
       <aside className="top-14 z-30 hidden h-full w-full shrink-0 md:sticky md:block border-r">
-        <SidebarTabsPanel />
+        <SidebarTabsPanel userId={userId} />
       </aside>
       <div className="block md:hidden h-0">
-        <Drawer.Root modal={true}>
+        <Drawer.Root modal={true} open={formsOpen} onOpenChange={setFormsOpen}>
           <DrawerTrigger>
             <CircularFloatingButton className="bottom-28 left-4">
               <Plus className="w-4 h-4" />
             </CircularFloatingButton>
           </DrawerTrigger>
           <DrawerContent className="h-[60%] ">
-            <DrawerFormsPanel className="mt-8" />
+            {formsOpen ? <DrawerFormsPanel className="mt-8" userId={userId} /> : null}
           </DrawerContent>
         </Drawer.Root>
       </div>
@@ -135,7 +143,7 @@ function HorizontalTabTriggerButton({ tabInfo }: { tabInfo: TabInfo }) {
   );
 }
 
-export function SidebarTabsPanel() {
+export function SidebarTabsPanel({ userId }: { userId?: string }) {
   const { currentSelection } = useSelectionContext();
   const [tab, setTab] = useState(ALL_FORMS.brand.value);
   const form: DocumentFormReturn = useFormContext();
@@ -154,18 +162,27 @@ export function SidebarTabsPanel() {
       <div className="flex flex-row h-full w-full">
         <ScrollArea className="border-r h-full bg-muted">
           <VerticalTabsList className="grid grid-cols-1 gap-2 w-20 rounded-none">
+            <VerticalTabTriggerButton tabInfo={ALL_FORMS.copy} />
             <VerticalTabTriggerButton tabInfo={ALL_FORMS.brand} />
             <VerticalTabTriggerButton tabInfo={ALL_FORMS.theme} />
             <VerticalTabTriggerButton tabInfo={ALL_FORMS.fonts} />
             <VerticalTabTriggerButton tabInfo={ALL_FORMS.pageNumber} />
           </VerticalTabsList>
         </ScrollArea>
-        <div className="p-2 flex flex-col items-stretch w-full ">
+        <div className="p-2 flex min-h-0 flex-1 flex-col items-stretch w-full overflow-y-auto">
           {/* //TODO: Share this area with stylemenu */}
           {currentSelection ? (
             <StyleMenu form={form} className={"m-4"} />
           ) : // TODO: Create consistent styles between tabs and StyleMenu
           null}
+          <VerticalTabsContent
+            value={ALL_FORMS.copy.value}
+            className="mt-0 border-0 p-0 m-4"
+          >
+            <h4 className="text-xl font-semibold">{ALL_FORMS.copy.name}</h4>
+            <Separator className="mt-2 mb-4"></Separator>
+            <CarouselCopyTemplates userId={userId} />
+          </VerticalTabsContent>
           <VerticalTabsContent
             value={ALL_FORMS.brand.value}
             className="mt-0 border-0 p-0 m-4"
@@ -206,7 +223,7 @@ export function SidebarTabsPanel() {
   );
 }
 
-export function DrawerFormsPanel({ className }: { className: string }) {
+export function DrawerFormsPanel({ className, userId }: { className: string; userId?: string }) {
   const { currentSelection } = useSelectionContext();
   const [tab, setTab] = useState(ALL_FORMS.brand.value);
   // TODO: Lift state to not loose it when drawer gets closed ?
@@ -224,15 +241,24 @@ export function DrawerFormsPanel({ className }: { className: string }) {
     >
       <div className="flex flex-col h-full ">
         <ScrollArea className=" border-b h-full bg-muted">
-          <TabsList className="grid grid-cols-4 gap-2 h-20 rounded-none">
+          <TabsList className="grid grid-cols-5 gap-2 h-20 rounded-none">
+            <HorizontalTabTriggerButton tabInfo={ALL_FORMS.copy} />
             <HorizontalTabTriggerButton tabInfo={ALL_FORMS.brand} />
             <HorizontalTabTriggerButton tabInfo={ALL_FORMS.theme} />
             <HorizontalTabTriggerButton tabInfo={ALL_FORMS.fonts} />
             <HorizontalTabTriggerButton tabInfo={ALL_FORMS.pageNumber} />
           </TabsList>
         </ScrollArea>
-        <div className="p-2 w-[320px] m-auto">
+        <div className="p-2 w-[320px] m-auto overflow-y-auto">
           {/* // TODO Should be in a ScrollArea but it does not scroll */}
+          <TabsContent
+            value={ALL_FORMS.copy.value}
+            className="mt-0 border-0 p-0 m-4 "
+          >
+            <h4 className="text-xl font-semibold">{ALL_FORMS.copy.name}</h4>
+            <Separator className="mt-2 mb-4"></Separator>
+            <CarouselCopyTemplates userId={userId} />
+          </TabsContent>
           <TabsContent
             value={ALL_FORMS.brand.value}
             className="mt-0 border-0 p-0 m-4 "

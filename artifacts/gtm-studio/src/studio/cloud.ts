@@ -157,61 +157,104 @@ export function listLocalTemplates(userId?: string): SavedTemplate[] {
 }
 
 const LOCAL_COPY_TEMPLATES = 'gtm-studio-copy-templates-v1';
+const COPY_STUDIOS = ['handwritten', 'avatar', 'memes', 'gif', 'handgif', 'carousel'] as const;
+
+export type CopyStudio = (typeof COPY_STUDIOS)[number];
 
 export type CopyTemplate = {
   id: string;
+  studio: CopyStudio;
   name: string;
   body: string;
   updatedAt: string;
   cloud: boolean;
 };
 
+function asCopyStudio(value: unknown): CopyStudio {
+  return COPY_STUDIOS.includes(value as CopyStudio) ? value as CopyStudio : 'handwritten';
+}
+
+function normalizeCopyTemplate(item: { id?: string; studio?: unknown; name?: string; body?: string; updatedAt?: string; cloud?: boolean } | null | undefined): CopyTemplate | null {
+  if (!item?.id || !item.name || !item.body) return null;
+  return {
+    id: item.id,
+    studio: asCopyStudio(item.studio),
+    name: item.name,
+    body: item.body,
+    updatedAt: item.updatedAt || new Date().toISOString(),
+    cloud: Boolean(item.cloud),
+  };
+}
+
+function sameCopyName(item: CopyTemplate, studio: CopyStudio, name: string) {
+  return item.studio === studio && item.name.toLowerCase() === name.toLowerCase();
+}
+
 function readLocalCopyTemplates(userId?: string): CopyTemplate[] {
-  const raw = readJson<CopyTemplate[]>(userKey(LOCAL_COPY_TEMPLATES, userId), []);
-  return raw.filter((item) => item && item.id && item.name && item.body);
+  const raw = readJson<Partial<CopyTemplate>[]>(userKey(LOCAL_COPY_TEMPLATES, userId), []);
+  return raw.map((item) => normalizeCopyTemplate(item)).filter((item): item is CopyTemplate => Boolean(item));
 }
 
 function writeLocalCopyTemplates(templates: CopyTemplate[], userId?: string) {
-  localStorage.setItem(userKey(LOCAL_COPY_TEMPLATES, userId), JSON.stringify(templates.slice(0, 80)));
+  const kept: CopyTemplate[] = [];
+  const counts = new Map<CopyStudio, number>();
+  for (const item of templates) {
+    const count = counts.get(item.studio) ?? 0;
+    if (count >= 40) continue;
+    counts.set(item.studio, count + 1);
+    kept.push(item);
+  }
+  localStorage.setItem(userKey(LOCAL_COPY_TEMPLATES, userId), JSON.stringify(kept));
 }
 
-export async function listCopyTemplates(userId?: string): Promise<CopyTemplate[]> {
+export async function listCopyTemplates(studio: CopyStudio, userId?: string): Promise<CopyTemplate[]> {
   const local = readLocalCopyTemplates(userId);
-  if (!supabase || !userId) return local;
+  const localStudio = local.filter((item) => item.studio === studio);
+  if (!supabase || !userId) return localStudio;
   const { data, error } = await supabase
     .from('outbound_copy_templates')
-    .select('id,name,body,updated_at')
+    .select('id,studio,name,body,updated_at')
+    .eq('studio', studio)
     .order('updated_at', { ascending: false });
-  if (error) return local;
-  const cloud = (data ?? []).map((row) => ({
+  if (error) return localStudio;
+  const cloud = (data ?? []).map((row) => normalizeCopyTemplate({
     id: row.id as string,
+    studio: row.studio as string,
     name: row.name as string,
     body: row.body as string,
     updatedAt: row.updated_at as string,
     cloud: true,
-  }));
-  const merged = [...cloud, ...local.filter((item) => !cloud.some((row) => row.id === item.id || row.name.toLowerCase() === item.name.toLowerCase()))];
-  writeLocalCopyTemplates(merged, userId);
-  return merged;
+  })).filter((item): item is CopyTemplate => Boolean(item));
+  const mergedStudio = [
+    ...cloud,
+    ...localStudio.filter((item) => !cloud.some((row) => row.id === item.id || sameCopyName(row, studio, item.name))),
+  ];
+  writeLocalCopyTemplates([...mergedStudio, ...local.filter((item) => item.studio !== studio)], userId);
+  return mergedStudio;
 }
 
-export async function saveCopyTemplate(name: string, body: string, userId?: string): Promise<{ template: CopyTemplate; syncError?: string }> {
+export async function saveCopyTemplate(studio: CopyStudio, name: string, body: string, userId?: string): Promise<{ template: CopyTemplate; syncError?: string }> {
   const trimmedName = name.trim();
   const trimmedBody = body.trim();
   const current = readLocalCopyTemplates(userId);
-  const existing = current.find((item) => item.name.toLowerCase() === trimmedName.toLowerCase());
+  const existing = current.find((item) => sameCopyName(item, studio, trimmedName));
   const record: CopyTemplate = {
     id: existing?.id ?? crypto.randomUUID(),
+    studio,
     name: trimmedName,
     body: trimmedBody,
     updatedAt: new Date().toISOString(),
     cloud: false,
   };
-  writeLocalCopyTemplates([record, ...current.filter((item) => item.id !== record.id && item.name.toLowerCase() !== trimmedName.toLowerCase())], userId);
+  writeLocalCopyTemplates([
+    record,
+    ...current.filter((item) => item.id !== record.id && !sameCopyName(item, studio, trimmedName)),
+  ], userId);
   if (!supabase || !userId) return { template: record };
   const found = await supabase
     .from('outbound_copy_templates')
     .select('id')
+    .eq('studio', studio)
     .eq('name', record.name)
     .maybeSingle();
   if (found.error) return { template: record, syncError: found.error.message };
@@ -220,43 +263,51 @@ export async function saveCopyTemplate(name: string, body: string, userId?: stri
       .from('outbound_copy_templates')
       .update({ body: record.body, updated_at: record.updatedAt })
       .eq('id', found.data.id)
-      .select('id,name,body,updated_at')
+      .eq('studio', studio)
+      .select('id,studio,name,body,updated_at')
       .single()
     : supabase
       .from('outbound_copy_templates')
       .insert({
         id: record.id,
         user_id: userId,
+        studio,
         name: record.name,
         body: record.body,
         updated_at: record.updatedAt,
       })
-      .select('id,name,body,updated_at')
+      .select('id,studio,name,body,updated_at')
       .single();
   const { data, error } = await write;
   if (error || !data) return { template: record, syncError: error?.message ?? 'Could not save the template.' };
-  const saved: CopyTemplate = {
+  const saved = normalizeCopyTemplate({
     id: data.id,
+    studio: data.studio,
     name: data.name,
     body: data.body,
     updatedAt: data.updated_at,
     cloud: true,
-  };
+  });
+  if (!saved) return { template: record, syncError: 'Could not save the template.' };
   const next = readLocalCopyTemplates(userId);
-  writeLocalCopyTemplates([saved, ...next.filter((item) => item.id !== record.id && item.id !== saved.id && item.name.toLowerCase() !== saved.name.toLowerCase())], userId);
+  writeLocalCopyTemplates([
+    saved,
+    ...next.filter((item) => item.id !== record.id && item.id !== saved.id && !sameCopyName(item, studio, saved.name)),
+  ], userId);
   return { template: saved };
 }
 
 export async function removeCopyTemplate(template: CopyTemplate, userId?: string): Promise<{ syncError?: string }> {
+  const studio = asCopyStudio(template.studio);
   const current = readLocalCopyTemplates(userId);
   writeLocalCopyTemplates(
-    current.filter((item) => item.id !== template.id && item.name.toLowerCase() !== template.name.toLowerCase()),
+    current.filter((item) => item.id !== template.id && !sameCopyName(item, studio, template.name)),
     userId,
   );
   if (!supabase || !userId) return {};
-  const byId = await supabase.from('outbound_copy_templates').delete().eq('id', template.id);
+  const byId = await supabase.from('outbound_copy_templates').delete().eq('id', template.id).eq('studio', studio);
   if (byId.error) return { syncError: byId.error.message };
-  const byName = await supabase.from('outbound_copy_templates').delete().eq('name', template.name);
+  const byName = await supabase.from('outbound_copy_templates').delete().eq('studio', studio).eq('name', template.name);
   if (byName.error) return { syncError: byName.error.message };
   return {};
 }

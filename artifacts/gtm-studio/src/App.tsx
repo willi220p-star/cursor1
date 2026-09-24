@@ -468,7 +468,7 @@ function Router() {
             <Route path="/memes"><StudioGenerator key="memes" mode="memes" userId={userId} /></Route>
             <Route path="/gif"><StudioGenerator key="gif" mode="gif" userId={userId} /></Route>
             <Route path="/handgif"><StudioGenerator key="handgif" mode="handgif" userId={userId} /></Route>
-            <Route path="/carousel"><CarouselGeneratorPage /></Route>
+            <Route path="/carousel"><CarouselGeneratorPage userId={userId} /></Route>
             <Route path="/settings"><SettingsPage userId={userId} email={email} /></Route>
             <Route><NotFound /></Route>
           </Switch>
