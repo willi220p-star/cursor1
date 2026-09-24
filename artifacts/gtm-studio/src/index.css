@@ -657,6 +657,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 }
 .hand-option:hover { border-color: var(--primary); background: var(--accent); }
 .hand-option.is-active { border-color: var(--primary); background: var(--accent); color: var(--primary); }
+.copy-template-row { display: grid; grid-template-columns: minmax(108px, 0.8fr) minmax(0, 1.35fr); gap: 12px; align-items: start; }
 .writing-style-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .writing-style {
   display: flex;

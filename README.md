@@ -62,6 +62,7 @@ Upgrade later only if you outgrow free auth or storage quotas.
 - Meme and GIF text boxes have Canva-like style: highlight words, typing / glow / highlight / pop on each layer.
 - Optional drawn signature (one-click pad) plus a signature file upload.
 - Notes writing styles are Handwriting 1 through 7, matched to the pen samples. The older handwriting list is not shown in Notes.
+- Notes Copy can save a named message template (name and copy) and pick it later. Those templates are stored in Supabase for the signed-in operator.
 - Crop (zoom + pan) on notes, memes, GIFs, and avatars. Drag the note and avatar frames to size them.
 - Handwritten notes on A4: notebook, white paper, or diary; paper colours (white, cream, watercolour, custom); real desk woods (pine, oak, walnut, maple, mahogany, or a custom colour / photo); finishes (desk, flat lay, scanned, clean)
 - Paper background: put linen, kraft, grid, or your own photo on the sheet, then remove it
