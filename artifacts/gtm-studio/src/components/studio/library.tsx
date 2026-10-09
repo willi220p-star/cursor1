@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowRight, ArrowUpDown, CircleUser, Database, FileText, Film, Folder, FolderInput, Image, MoreHorizontal, Pencil, PenLine, Trash2 } from 'lucide-react';
+import { ArrowUpDown, Database, FileText, Folder, FolderInput, FolderPlus, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react';
 import { Link } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -34,6 +34,7 @@ import {
   type FileFolder,
   type StoredFile,
 } from '@/studio/cloud';
+import { studioInfo, studioInitial } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate, StudioMode } from '@/studio/types';
 
 type LibraryItem =
@@ -48,29 +49,28 @@ type NameRequest =
   | { kind: 'rename-template'; template: SavedTemplate }
   | { kind: 'rename-campaign'; campaign: SavedCampaign };
 
-function modeLabel(mode: StudioMode) {
-  if (mode === 'handwritten') return 'Handwritten notes';
-  if (mode === 'handgif') return 'Handwriting GIF';
-  if (mode === 'memes') return 'Moving memes';
-  if (mode === 'avatar') return 'Avatar cards';
-  return 'Animated GIFs';
-}
+type KindFilter = 'all' | LibraryItem['kind'];
 
-function ModeIcon({ mode }: { mode: StudioMode }) {
-  if (mode === 'handwritten') return <PenLine size={16} aria-hidden />;
-  if (mode === 'handgif') return <Pencil size={16} aria-hidden />;
-  if (mode === 'avatar') return <CircleUser size={16} aria-hidden />;
-  if (mode === 'memes') return <Image size={16} aria-hidden />;
-  return <Film size={16} aria-hidden />;
+const kindFilters: Array<{ value: KindFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'campaign', label: 'Campaigns' },
+  { value: 'template', label: 'Templates' },
+  { value: 'file', label: 'Files' },
+];
+
+function itemMode(item: LibraryItem): StudioMode | null {
+  if (item.kind === 'template') return item.template.mode;
+  if (item.kind === 'campaign') return item.campaign.mode;
+  return null;
 }
 
 function itemDetail(item: LibraryItem) {
-  if (item.kind === 'template') return `Template · ${modeLabel(item.template.mode)}`;
+  if (item.kind === 'template') return `${studioInfo(item.template.mode).label} template`;
   if (item.kind === 'campaign') {
     const rows = item.campaign.contacts?.length ?? 0;
-    return `Campaign · ${modeLabel(item.campaign.mode)} · ${rows} ${rows === 1 ? 'row' : 'rows'}`;
+    return `${studioInfo(item.campaign.mode).label} campaign with ${rows} ${rows === 1 ? 'row' : 'rows'}`;
   }
-  return `File · ${item.file.label}`;
+  return item.file.label;
 }
 
 export function Library({
@@ -100,6 +100,8 @@ export function Library({
   const [sortDesc, setSortDesc] = useState(true);
   const [preview, setPreview] = useState<StoredFile | null>(null);
   const [previewBroken, setPreviewBroken] = useState(false);
+  const [query, setQuery] = useState('');
+  const [kind, setKind] = useState<KindFilter>('all');
 
   const load = () => {
     listStoredFiles(userId).then(setFiles).catch(() => setFiles([]));
@@ -151,7 +153,14 @@ export function Library({
     return next;
   }, [templates, campaigns, files, sortDesc]);
 
-  const visibleItems = items.filter((item) => (openFolder ? item.folderId === openFolder.id : !item.folderId));
+  const needle = query.trim().toLowerCase();
+  // A search looks in every folder; otherwise show the open folder (or the loose items).
+  const visibleItems = items.filter((item) => {
+    if (kind !== 'all' && item.kind !== kind) return false;
+    if (needle) return `${item.name} ${itemDetail(item)}`.toLowerCase().includes(needle);
+    return openFolder ? item.folderId === openFolder.id : !item.folderId;
+  });
+  const kindCount = (value: KindFilter) => (value === 'all' ? items.length : items.filter((item) => item.kind === value).length);
   const folderCount = (folderId: string) => items.filter((item) => item.folderId === folderId).length;
   const libraryEmpty = loaded && items.length === 0 && (folders?.length ?? 0) === 0;
 
@@ -255,53 +264,43 @@ export function Library({
       ? 'Name'
       : 'Folder name';
 
-  return (
-    <section aria-labelledby="library-heading" className="mt-10">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="eyebrow">Library</p>
-          <h2 id="library-heading" className="display mt-1 text-2xl font-semibold">Templates, files, and campaigns</h2>
-        </div>
-        <button type="button" className="btn btn-primary btn-sm" onClick={() => ask({ kind: 'create-folder' })}>
-          <Folder size={16} aria-hidden /> New folder
-        </button>
-      </div>
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setOpenId(null)} aria-current={openFolder ? undefined : 'page'}>
-          Library
-        </button>
-        {openFolder && (
-          <span className="inline-flex items-center gap-1 font-semibold">
-            {openFolder.name}
-            <ActionsMenu label={`Actions for folder ${openFolder.name}`}>
-              <DropdownMenuItem className="min-h-11" onSelect={() => ask({ kind: 'rename-folder', folder: openFolder }, openFolder.name)}>
-                <Pencil aria-hidden /> Rename
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onSelect={() => deleteFolder(openFolder)}>
-                <Trash2 aria-hidden /> Delete folder
-              </DropdownMenuItem>
-            </ActionsMenu>
-          </span>
-        )}
-        <span className="mono text-muted-foreground">
-          {loaded ? `${visibleItems.length} ${visibleItems.length === 1 ? 'item' : 'items'}` : 'Loading…'}
-        </span>
-      </div>
+  const openItem = (item: LibraryItem) => {
+    if (item.kind === 'template') onOpenTemplate(item.template);
+    else if (item.kind === 'campaign') onOpenCampaign(item.campaign);
+    else openFile(item.file);
+  };
 
-      {!openFolder && (folders?.length ?? 0) > 0 && (
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {folders?.map((folder) => {
-            const count = folderCount(folder.id);
-            return (
-              <article key={folder.id} className="panel flex min-w-0 items-center gap-2 p-3">
-                <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => setOpenId(folder.id)}>
-                  <span className="icon-disc"><Folder size={16} aria-hidden /></span>
-                  <span className="min-w-0">
-                    <strong className="block truncate">{folder.name}</strong>
-                    <small className="block text-muted-foreground">{count} {count === 1 ? 'item' : 'items'}</small>
-                  </span>
-                </button>
+  return (
+    <section aria-labelledby="library-heading" className="flex flex-col gap-5">
+      <div className="library-head">
+        <h2 id="library-heading" className="section-title">Library</h2>
+        <label className="search-field">
+          <Search size={16} aria-hidden />
+          <span className="sr-only">Search the library</span>
+          <input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search campaigns, templates and files" />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="segmented" role="group" aria-label="Show">
+          {kindFilters.map((filter) => (
+            <button key={filter.value} type="button" aria-pressed={kind === filter.value} onClick={() => setKind(filter.value)}>
+              {filter.label}<span className="count">{loaded ? kindCount(filter.value) : ''}</span>
+            </button>
+          ))}
+        </div>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSortDesc((value) => !value)} aria-label={sortDesc ? 'Sorted newest first. Show oldest first.' : 'Sorted oldest first. Show newest first.'}>
+          <ArrowUpDown size={15} aria-hidden /> {sortDesc ? 'Newest first' : 'Oldest first'}
+        </button>
+      </div>
+      {!needle && (
+        <div className="chip-row" role="group" aria-label="Folders">
+          <button type="button" className="chip" aria-pressed={!openFolder} onClick={() => setOpenId(null)}>Library</button>
+          {folders?.map((folder) => (
+            <span key={folder.id} className="inline-flex items-center gap-1">
+              <button type="button" className="chip" aria-pressed={openId === folder.id} onClick={() => setOpenId(folder.id)}>
+                <Folder size={14} aria-hidden /> {folder.name} <span className="count">{folderCount(folder.id)}</span>
+              </button>
+              {openId === folder.id && (
                 <ActionsMenu label={`Actions for folder ${folder.name}`} busy={busyId === folder.id}>
                   <DropdownMenuItem className="min-h-11" onSelect={() => ask({ kind: 'rename-folder', folder }, folder.name)}>
                     <Pencil aria-hidden /> Rename
@@ -311,120 +310,92 @@ export function Library({
                     <Trash2 aria-hidden /> Delete folder
                   </DropdownMenuItem>
                 </ActionsMenu>
-              </article>
-            );
-          })}
+              )}
+            </span>
+          ))}
+          <button type="button" className="chip is-dashed" onClick={() => ask({ kind: 'create-folder' })}>
+            <FolderPlus size={14} aria-hidden /> New folder
+          </button>
         </div>
       )}
 
-      <div className="ledger max-h-[560px] overflow-y-auto">
+      <div className="max-h-[640px] overflow-y-auto rounded-[20px]">
         {!loaded ? (
-          <div className="space-y-3 p-4" aria-busy="true" aria-label="Loading library">
-            {[0, 1, 2].map((item) => <div key={item} className="h-11 animate-pulse rounded-md bg-surface-2" />)}
+          <div className="group-list space-y-3 p-4" aria-busy="true" aria-label="Loading library">
+            {[0, 1, 2].map((item) => <div key={item} className="h-11 animate-pulse rounded-[12px] bg-surface-2" />)}
           </div>
         ) : visibleItems.length ? (
-          <div className="overflow-x-auto">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Name</th>
-                  <th scope="col" aria-sort={sortDesc ? 'descending' : 'ascending'}>
-                    <button type="button" className="inline-flex h-11 items-center gap-1 uppercase tracking-[.06em]" onClick={() => setSortDesc((value) => !value)}>
-                      Updated <ArrowUpDown size={14} aria-hidden />
-                    </button>
-                  </th>
-                  <th scope="col"><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleItems.map((item) => (
-                  <tr
-                    key={`${item.kind}-${item.id}`}
-                    data-library-kind={item.kind}
-                    data-library-id={item.id}
-                    data-library-name={item.name}
-                    data-storage-path={item.kind === 'file' ? item.file.storagePath : undefined}
-                    onClick={() => {
-                      if (item.kind === 'template') onOpenTemplate(item.template);
-                      else if (item.kind === 'campaign') onOpenCampaign(item.campaign);
-                      else openFile(item.file);
-                    }}
-                  >
-                    <td>
-                      <span className="flex items-center gap-3">
-                        <span className="icon-disc">
-                          {item.kind === 'file'
-                            ? <FileText size={16} aria-hidden />
-                            : <ModeIcon mode={item.kind === 'template' ? item.template.mode : item.campaign.mode} />}
-                        </span>
-                        <span className="min-w-0">
-                          <strong className="block max-w-[280px] truncate" title={item.name}>{item.name}</strong>
-                          <small className="block truncate text-muted-foreground">{itemDetail(item)}</small>
-                        </span>
-                      </span>
-                    </td>
-                    <td className="text-muted-foreground" title={new Date(item.at).toLocaleString()}>{relativeTime(item.at)}</td>
-                    <td className="text-right" onClick={(event) => event.stopPropagation()}>
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => {
-                            if (item.kind === 'template') onOpenTemplate(item.template);
-                            else if (item.kind === 'campaign') onOpenCampaign(item.campaign);
-                            else openFile(item.file);
-                          }}
-                        >
-                          Open <ArrowRight size={16} aria-hidden />
-                        </button>
-                        <ActionsMenu label={`Actions for ${item.name}`} busy={busyId === item.id} storagePath={item.kind === 'file' ? item.file.storagePath : undefined}>
-                          <DropdownMenuItem
-                            className="min-h-11"
-                            onSelect={() => {
-                              if (item.kind === 'file') ask({ kind: 'rename-file', file: item.file }, item.name);
-                              else if (item.kind === 'template') ask({ kind: 'rename-template', template: item.template }, item.name);
-                              else ask({ kind: 'rename-campaign', campaign: item.campaign }, item.name);
-                            }}
-                          >
-                            <Pencil aria-hidden /> Rename
-                          </DropdownMenuItem>
-                          <MoveMenu current={item.folderId} folders={folders ?? []} onMove={(folderId) => moveItem(item, folderId)} />
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onSelect={() => deleteItem(item)}>
-                            <Trash2 aria-hidden /> Delete
-                          </DropdownMenuItem>
-                        </ActionsMenu>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="group-list">
+            {visibleItems.map((item) => {
+              const mode = itemMode(item);
+              return (
+                <li
+                  key={`${item.kind}-${item.id}`}
+                  className="group-row"
+                  data-library-kind={item.kind}
+                  data-library-id={item.id}
+                  data-library-name={item.name}
+                  data-storage-path={item.kind === 'file' ? item.file.storagePath : undefined}
+                  onClick={() => openItem(item)}
+                >
+                  <span className="item-mark" data-studio={mode ?? 'file'} aria-hidden>
+                    {mode ? studioInitial(mode) : <FileText size={18} />}
+                  </span>
+                  <span className="item-text">
+                    <strong title={item.name}>{item.name}</strong>
+                    <small>{itemDetail(item)}</small>
+                  </span>
+                  <span className="item-when" title={new Date(item.at).toLocaleString()}>{relativeTime(item.at)}</span>
+                  <span className="flex flex-none items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                    <button type="button" className="btn btn-quiet btn-sm" onClick={() => openItem(item)} aria-label={`Open ${item.name}`}>Open</button>
+                    <ActionsMenu label={`Actions for ${item.name}`} busy={busyId === item.id} storagePath={item.kind === 'file' ? item.file.storagePath : undefined}>
+                      <DropdownMenuItem
+                        className="min-h-11"
+                        onSelect={() => {
+                          if (item.kind === 'file') ask({ kind: 'rename-file', file: item.file }, item.name);
+                          else if (item.kind === 'template') ask({ kind: 'rename-template', template: item.template }, item.name);
+                          else ask({ kind: 'rename-campaign', campaign: item.campaign }, item.name);
+                        }}
+                      >
+                        <Pencil aria-hidden /> Rename
+                      </DropdownMenuItem>
+                      <MoveMenu current={item.folderId} folders={folders ?? []} onMove={(folderId) => moveItem(item, folderId)} />
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onSelect={() => deleteItem(item)}>
+                        <Trash2 aria-hidden /> Delete
+                      </DropdownMenuItem>
+                    </ActionsMenu>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
         ) : libraryEmpty ? (
-          <div className="empty-state">
+          <div className="group-list empty-state">
             <Database size={24} className="text-muted-foreground" aria-hidden />
             <h3>No campaigns yet</h3>
             <p>Import a list from any studio and press Save. Your first save appears here.</p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <Link href="/handwritten" className="btn btn-primary">Start with Notes</Link>
-              <button type="button" className="btn btn-quiet" onClick={onLoadSample}>Load sample list</button>
+              <button type="button" className="btn btn-quiet" onClick={onLoadSample}>Load the sample list</button>
             </div>
             <ol className="process-strip mt-8 w-full max-w-[880px] text-left">
-              <li><span>01</span> Drop a list on the desk</li>
-              <li><span>02</span> Write once with merge tags</li>
-              <li><span>03</span> Tune ink, paper or motion</li>
-              <li><span>04</span> Download this row or the ZIP</li>
+              <li><span>1</span> Drop a list on the desk</li>
+              <li><span>2</span> Write once with merge tags</li>
+              <li><span>3</span> Tune ink, paper or motion</li>
+              <li><span>4</span> Download this row or the ZIP</li>
             </ol>
           </div>
         ) : (
-          <div className="empty-state">
-            <Folder size={24} className="text-muted-foreground" aria-hidden />
-            <h3>{openFolder ? 'This folder is empty' : 'Everything is in a folder'}</h3>
+          <div className="group-list empty-state">
+            {needle ? <Search size={24} className="text-muted-foreground" aria-hidden /> : <Folder size={24} className="text-muted-foreground" aria-hidden />}
+            <h3>{needle ? 'Nothing matches that' : openFolder ? 'This folder is empty' : kind !== 'all' ? 'Nothing of that kind here' : 'Everything is in a folder'}</h3>
             <p>
-              {openFolder
-                ? 'Open the three dots on a template, file, or campaign and choose Move.'
-                : 'Open a folder to see what is inside, or leave new work here in the library.'}
+              {needle
+                ? 'Try part of a name, a studio, or a file type like PNG.'
+                : openFolder
+                  ? 'Open the three dots on a template, file, or campaign and choose Move.'
+                  : 'Open a folder to see what is inside, or leave new work here in the library.'}
             </p>
           </div>
         )}
