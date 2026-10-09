@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, ruleStep } from './note-layout';
+import { countWords, noteAdvice } from './note-advice';
 
 const paper = { paperY: 40, paperH: 900, noteY: 0.12, lineSpacing: 1.35, scale: 1 };
 
@@ -32,5 +33,25 @@ describe('note line grid', () => {
     expect(rowsNeeded({ copyLines: 4, signatureText: true, signatureImage: false, postscriptLines: 1 })).toBe(7);
     expect(rowsNeeded({ copyLines: 4, signatureText: true, signatureImage: true, postscriptLines: 1 })).toBe(8);
     expect(rowsNeeded({ copyLines: 0, signatureText: false, signatureImage: false, postscriptLines: 0 })).toBe(1);
+  });
+});
+
+describe('note length advice', () => {
+  it('counts words, not stray punctuation', () => {
+    expect(countWords('Hi Maya, saw the launch — loved it.')).toBe(7);
+    expect(countWords('   ')).toBe(0);
+  });
+
+  it('warns and says how much to cut when the writing had to shrink', () => {
+    const advice = noteAdvice(60, 50, { fontSize: 41, needed: 9, available: 9, chosen: { needed: 12, available: 9 } });
+    expect(advice.tone).toBe('warn');
+    expect(advice.text).toContain('shrinks to 41');
+    expect(advice.text).toContain('Cut about 15 words');
+  });
+
+  it('praises a good length and explains growth on short notes', () => {
+    expect(noteAdvice(30, 50, { fontSize: 50, needed: 6, available: 9, chosen: { needed: 6, available: 9 } }).tone).toBe('good');
+    expect(noteAdvice(12, 50, { fontSize: 62, needed: 4, available: 7, chosen: { needed: 3, available: 9 } }).text).toContain('grows to 62');
+    expect(noteAdvice(48, 50, null).tone).toBe('info');
   });
 });

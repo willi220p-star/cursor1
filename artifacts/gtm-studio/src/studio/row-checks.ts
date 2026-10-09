@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { unresolvedTags } from './merge';
+import { missingTags } from './merge';
 import type { Contact } from './types';
 
 export type RowIssue = { row: number; problems: string[] };
@@ -32,7 +32,7 @@ export function checkRows(rows: Contact[], copy: string): RowIssue[] {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'email address looks wrong' });
       }
     }
-    const missing = [...new Set(unresolvedTags(copy, contact as Contact))];
+    const missing = missingTags(copy, contact as Contact);
     for (const tag of missing) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `no ${readable(tag)}` });
     }
