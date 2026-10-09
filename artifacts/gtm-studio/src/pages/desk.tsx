@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { CircleUser, Film, Image, Pencil } from 'lucide-react';
 import { Library } from '@/components/studio/library';
+import { PanelBoundary } from '@/components/error-boundary';
 import { publicAssetUrl } from '@/lib/public-url';
 import { exportsInLast30Days, requestSampleList } from '@/studio/activity';
 import { listCampaigns, subscribeTemplateChanges } from '@/studio/cloud';
+import { reportError } from '@/lib/report';
 import { renderMerge } from '@/studio/merge';
 import { openCampaignInStudio, openTemplateInStudio, studioInfo, type StudioKey } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate } from '@/studio/types';
@@ -45,8 +47,14 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
   const scope = userId ?? 'anonymous';
   const [campaigns, setCampaigns] = useState<SavedCampaign[] | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
+  const [campaignsFailed, setCampaignsFailed] = useState(false);
   const refreshStats = () => {
-    listCampaigns(userId).then(setCampaigns).catch(() => setCampaigns([]));
+    setCampaignsFailed(false);
+    listCampaigns(userId).then(setCampaigns).catch((error) => {
+      reportError(error, { area: 'desk' });
+      setCampaignsFailed(true);
+      setCampaigns([]);
+    });
   };
   const refreshDesk = () => {
     refreshStats();
@@ -105,6 +113,12 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
               </>
             )}
           </div>
+          {campaignsFailed && (
+            <div className="load-error" role="alert">
+              <span>Could not load your campaigns, so these numbers may be wrong.</span>
+              <button type="button" className="btn btn-quiet btn-sm" onClick={refreshStats}>Retry</button>
+            </div>
+          )}
           <p className="desk-stats" aria-label="Workspace numbers">
             <span><strong>{list.length}</strong> {list.length === 1 ? 'campaign' : 'campaigns'}</span>
             <span><strong>{contactCount}</strong> prospect rows</span>
@@ -152,6 +166,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
         </div>
       </section>
 
+      <PanelBoundary label="The library">
       <Library
         userId={userId}
         revision={libraryRevision}
@@ -160,6 +175,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
         onOpenTemplate={openTemplate}
         onLoadSample={loadSample}
       />
+      </PanelBoundary>
     </div>
   );
 }

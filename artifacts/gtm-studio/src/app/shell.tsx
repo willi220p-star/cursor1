@@ -3,6 +3,7 @@ import type { User } from '@supabase/supabase-js';
 import { LogOut, Menu, Moon, Search, Settings2, Sun } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { CommandPalette } from '@/components/command-palette';
+import { PanelBoundary } from '@/components/error-boundary';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -130,13 +131,13 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
           </nav>
         </SheetContent>
       </Sheet>
-      <CommandPalette open={searchOpen} onOpenChange={setSearchOpen} userId={user.id} />
+      <PanelBoundary label="Search"><CommandPalette open={searchOpen} onOpenChange={setSearchOpen} userId={user.id} /></PanelBoundary>
       <main
         id="main"
         tabIndex={-1}
         className={location === '/carousel' ? 'app-main w-full min-w-0 outline-none' : 'app-main mx-auto w-full min-w-0 max-w-[1440px] px-4 py-6 outline-none md:px-8 md:py-10'}
       >
-        {children}
+        <PanelBoundary label="This page" resetKey={location}>{children}</PanelBoundary>
       </main>
     </div>
   );

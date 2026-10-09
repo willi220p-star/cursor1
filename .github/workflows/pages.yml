@@ -29,6 +29,13 @@ jobs:
       - run: pnpm install
       - name: Typecheck
         run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm --filter @workspace/gtm-studio run test
+      - name: Browser tests
+        working-directory: artifacts/gtm-studio
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:e2e
       - name: Build studio
         working-directory: artifacts/gtm-studio
         env:
@@ -36,6 +43,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
         run: pnpm run build
       - name: Prepare Pages files
         run: |

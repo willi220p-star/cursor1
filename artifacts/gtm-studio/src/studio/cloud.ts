@@ -586,7 +586,9 @@ export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(400);
-  if (error || !data) return [];
+  // Callers show a load error with Retry; an empty list here would hide the failure.
+  if (error) throw error;
+  if (!data) return [];
   return data.map((row) => ({
     id: row.id,
     filename: row.filename,
@@ -606,7 +608,8 @@ export async function listFileFolders(userId?: string): Promise<FileFolder[]> {
     .select('id,name,created_at')
     .eq('user_id', userId)
     .order('name', { ascending: true });
-  if (error || !data) return [];
+  if (error) throw error;
+  if (!data) return [];
   return data.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
 }
 

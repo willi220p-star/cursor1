@@ -1,3 +1,5 @@
+import { RotateCcw } from 'lucide-react';
+import { reportError } from '@/lib/report';
 import {
   Component,
   type ComponentType,
@@ -15,6 +17,8 @@ interface ErrorBoundaryProps {
   FallbackComponent?: ComponentType<ErrorFallbackProps>;
   /** Changing this clears a caught error. Pass the route to recover on navigation. */
   resetKey?: unknown;
+  /** Names the part of the app in crash reports. */
+  area?: string;
 }
 
 interface ErrorBoundaryState {
@@ -75,11 +79,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
-    console.error(
-      'ErrorBoundary caught an error:',
-      toError(error),
-      info.componentStack,
-    );
+    reportError(toError(error), { componentStack: info.componentStack, area: this.props.area ?? 'app' });
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
@@ -103,4 +103,19 @@ export class ErrorBoundary extends Component<
     const Fallback = this.props.FallbackComponent ?? DefaultFallback;
     return <Fallback error={error} resetError={this.resetError} />;
   }
+}
+
+/**
+ * Fences one part of the screen. If it crashes, only that part shows a message and a
+ * Try again button; the rest of the page and the user's work stay put.
+ */
+export function PanelBoundary({ label, resetKey, children }: { label: string; resetKey?: unknown; children: ReactNode }) {
+  const Fallback = ({ resetError }: ErrorFallbackProps) => (
+    <div className="panel-fallback" role="alert">
+      <strong>{label} stopped working</strong>
+      <p>Your list and settings are safe. Try again, and if it keeps happening, reload the page.</p>
+      <button type="button" className="btn btn-quiet" onClick={resetError}><RotateCcw size={16} aria-hidden /> Try again</button>
+    </div>
+  );
+  return <ErrorBoundary area={label} resetKey={resetKey} FallbackComponent={Fallback}>{children}</ErrorBoundary>;
 }

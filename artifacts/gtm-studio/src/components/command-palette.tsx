@@ -9,6 +9,7 @@ import { listCampaigns, listStoredFiles, listTemplateConfigs, type StoredFile } 
 import { openCampaignInStudio, openTemplateInStudio, studioInfo, studioInitial, studios } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate } from '@/studio/types';
 import { useTheme } from '@/lib/theme';
+import { reportError } from '@/lib/report';
 
 type Loaded = { campaigns: SavedCampaign[]; templates: SavedTemplate[]; files: StoredFile[] };
 
@@ -16,15 +17,22 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
   const [, navigate] = useLocation();
   const { resolved, setPreference } = useTheme();
   const [data, setData] = useState<Loaded | null>(null);
+  const [failed, setFailed] = useState(false);
   const scope = userId ?? 'anonymous';
 
   useEffect(() => {
     if (!open) return;
     let alive = true;
+    setFailed(false);
+    const settle = <T,>(work: Promise<T[]>) => work.catch((error) => {
+      reportError(error, { area: 'search' });
+      if (alive) setFailed(true);
+      return [] as T[];
+    });
     Promise.all([
-      listCampaigns(userId).catch(() => []),
-      listTemplateConfigs(userId).catch(() => []),
-      listStoredFiles(userId).catch(() => []),
+      settle(listCampaigns(userId)),
+      settle(listTemplateConfigs(userId)),
+      settle(listStoredFiles(userId)),
     ]).then(([campaigns, templates, files]) => {
       if (alive) setData({ campaigns, templates, files });
     });
@@ -56,6 +64,7 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
             <Command.Input placeholder="Search campaigns, looks, files and studios" autoFocus />
           </div>
           <Command.List className="cmdk-list">
+            {failed && <p className="cmdk-empty" role="alert">Some saved work could not be loaded. Close search and open it again to retry.</p>}
             <Command.Empty className="cmdk-empty">Nothing matches that. Try a prospect, a company or a studio name.</Command.Empty>
             <Command.Group heading="Studios">
               {studios.map((studio) => (

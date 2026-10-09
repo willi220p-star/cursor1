@@ -17,6 +17,7 @@ import {
 } from '@/studio/field-map';
 import { contactColumns, importProspectFile, importProspectText, type ImportedList } from '@/studio/importers';
 import { unresolvedTags } from '@/studio/merge';
+import { checkRows, describeIssue } from '@/studio/row-checks';
 import { studioModes, type Contact, type StudioMode } from '@/studio/types';
 import { DurablePortrait } from './shared';
 
@@ -166,6 +167,7 @@ export function ImportDialog({
   const mappedColumns = shown.map((item) => (item.use === 'custom' ? (item.customTag || item.column) : item.column));
   const portraitColumn = columnForField(map, 'portrait');
   const messageColumn = columnForField(map, 'message');
+  const rowIssues = useMemo(() => checkRows(mapped, copyForTags), [mapped, copyForTags]);
   const unknownTags = useMemo(() => (mapped[0] ? [...new Set(unresolvedTags(copyForTags, mapped[0]))] : []), [mapped, copyForTags]);
 
   const acceptRows = (imported: ImportedList, source: string, file?: File) => {
@@ -321,6 +323,17 @@ export function ImportDialog({
             <div className="dash-stat"><span>Matched fields</span><strong>{matched.length}</strong><small>{customs.length} extra columns kept as merge tags</small></div>
             <div className="dash-stat"><span>Unknown merge tags</span><strong>{unknownTags.length}</strong><small>{unknownTags.length ? 'Not found in this list' : 'Copy matches this list'}</small></div>
           </div>
+
+          {rowIssues.length > 0 && (
+            <div className="load-error row-check" role="status">
+              <strong className="text-sm">{rowIssues.length} {rowIssues.length === 1 ? 'row needs' : 'rows need'} a look before you generate</strong>
+              <ul className="m-0 list-disc pl-5 text-sm">
+                {rowIssues.slice(0, 6).map((issue) => <li key={issue.row}>{describeIssue(issue)}</li>)}
+              </ul>
+              {rowIssues.length > 6 && <span className="text-sm text-muted-foreground">And {rowIssues.length - 6} more. You can still import; these rows may come out with blanks or fail.</span>}
+              {rowIssues.length <= 6 && <span className="text-sm text-muted-foreground">You can still import; these rows may come out with blanks or fail.</span>}
+            </div>
+          )}
 
           <div>
             <p className="label">Field titles</p>
