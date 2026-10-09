@@ -46,7 +46,7 @@ const topBottom = (top: string, bottom: string): TextLayer[] => [
   layer('footer', 'Bottom line', bottom, 0.06, 0.74, 0.88, 0.2, 52),
 ];
 
-const stacked = (lines: string[]): TextLayer[] =>
+const stacked = (lines: string[], extras: Partial<TextLayer> = {}): TextLayer[] =>
   lines.map((text, index) => layer(
     `tier-${index}`,
     `Tier ${index + 1}`,
@@ -56,6 +56,7 @@ const stacked = (lines: string[]): TextLayer[] =>
     0.84,
     0.2,
     34,
+    extras,
   ));
 
 const leftColumn = (lines: string[], top = 0.02, span = 0.96): TextLayer[] =>
@@ -459,7 +460,8 @@ export const memeSamples: MemeSample[] = [
       '2. Wait for {company}',
       '3. Wait some more',
       '4. Write {first_name|them} a note instead',
-    ]),
+      // Dark marker on the white boards; white captions disappear here.
+    ], { color: '#1f2430', outline: false }),
   },
   {
     id: 'whiteboard',
