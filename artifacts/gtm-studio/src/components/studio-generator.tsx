@@ -9,6 +9,7 @@ import {
   ImagePlus,
   Images,
   Keyboard,
+  MoreHorizontal,
   Link2,
   LoaderCircle,
   Palette,
@@ -35,6 +36,7 @@ import { useLocation } from 'wouter';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import { Progress } from '@/components/ui/progress';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -150,6 +152,7 @@ import {
 } from '@/studio/writeback';
 import { memeSamples, type MemeSample } from '@/studio/meme-samples';
 import { publicAssetUrl } from '@/lib/utils';
+import { studioInfo } from '@/studio/studios';
 import { BatchReview } from '@/components/studio/batch-review';
 import { ContactFilmstrip } from '@/components/studio/contact-filmstrip';
 import { ImportDialog, type ImportResult, type ImportStep } from '@/components/studio/import-dialog';
@@ -157,7 +160,7 @@ import type { FieldAssignment } from '@/studio/field-map';
 import { SampleStrip } from '@/components/studio/sample-strip';
 import { SignaturePad } from '@/components/studio/signature-pad';
 import { ShortcutsDialog } from '@/components/studio/shortcuts-dialog';
-import { ColorField, DurablePortrait, FieldRow, FileButton, InfoTip, Section, SliderField, contactMeta, contactName } from '@/components/studio/shared';
+import { ColorField, DurablePortrait, FieldRow, FileButton, InfoTip, MoreSettings, Section, SliderField, contactMeta, contactName } from '@/components/studio/shared';
 
 function StyledLayerText({ text, highlight, color }: { text: string; highlight?: string; color?: string }) {
   const tokens = (highlight || '').split(',').map((item) => item.trim()).filter(Boolean);
@@ -1739,7 +1742,7 @@ export function StudioGenerator({
     <Section title="Desk surface" hint="Real pine, oak, walnut, maple or mahogany in the frame. Upload a photo if you want a different desk, or remove it.">
       <ToggleGroup type="single" value={config.surface} onValueChange={(value) => value && updateConfig('surface', value as StudioConfig['surface'])} className="grid grid-cols-2 gap-2" aria-label="Desk surface">
         {deskSurfaces.map((item) => (
-          <ToggleGroupItem key={item.id} value={item.id} className="option-chip swatch-option h-11 justify-start rounded-[6px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">
+          <ToggleGroupItem key={item.id} value={item.id} className="option-chip swatch-option h-11 justify-start rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">
             {item.id === 'custom' ? (
               <span className="swatch" style={{ background: config.deskColor || item.swatch }} aria-hidden />
             ) : (
@@ -1833,7 +1836,7 @@ export function StudioGenerator({
     <Section title="Page" hint="A4 sheet. Notebook, white paper, or diary — same size, different ruling.">
       <ToggleGroup type="single" value={config.paperKind} onValueChange={(value) => value && applyPaperKind(value as PaperKind)} className="grid grid-cols-3 gap-2" aria-label="Paper kind">
         {paperKinds.map((item) => (
-          <ToggleGroupItem key={item.id} value={item.id} title={item.hint} className="option-chip h-11 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{item.label}</ToggleGroupItem>
+          <ToggleGroupItem key={item.id} value={item.id} title={item.hint} className="option-chip h-11 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{item.label}</ToggleGroupItem>
         ))}
       </ToggleGroup>
       <p className="helper">{paperKinds.find((item) => item.id === config.paperKind)?.hint}</p>
@@ -1844,7 +1847,7 @@ export function StudioGenerator({
     <FieldRow label="Paper colour">
       <ToggleGroup type="single" value={config.paperColorPreset} onValueChange={(value) => value && applyPaperColor(value as PaperColorPreset)} className="grid grid-cols-2 gap-2" aria-label="Paper colour">
         {paperColorPresets.map((item) => (
-          <ToggleGroupItem key={item.id} value={item.id} className="option-chip swatch-option h-10 justify-start rounded-[6px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">
+          <ToggleGroupItem key={item.id} value={item.id} className="option-chip swatch-option h-10 justify-start rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">
             <span className="swatch" style={{ background: item.id === 'custom' ? config.paperColor : item.hex }} aria-hidden />
             {item.label}
           </ToggleGroupItem>
@@ -1984,7 +1987,7 @@ export function StudioGenerator({
           <div className="flex flex-wrap items-center gap-2">
             <ToggleGroup type="single" value={activeLayerId} onValueChange={(value) => value && setActiveLayerId(value)} className="flex-wrap justify-start gap-2" aria-label="Text layer">
               {config.layers.map((layer) => (
-                <ToggleGroupItem key={layer.id} value={layer.id} className="option-chip h-10 rounded-[6px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{layer.name}</ToggleGroupItem>
+                <ToggleGroupItem key={layer.id} value={layer.id} className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{layer.name}</ToggleGroupItem>
               ))}
             </ToggleGroup>
             <button type="button" onClick={addLayer} className="btn btn-quiet"><Plus size={16} aria-hidden /> Add layer</button>
@@ -2007,7 +2010,7 @@ export function StudioGenerator({
               <FieldRow label="Text motion">
                 <ToggleGroup type="single" value={activeLayer.animation ?? 'still'} onValueChange={(value) => value && updateLayer({ animation: value as TextAnim })} className="grid grid-cols-3 gap-2" aria-label={`${activeLayer.name} text motion`}>
                   {textAnims.map((anim) => (
-                    <ToggleGroupItem key={anim.id} value={anim.id} title={anim.hint} className="option-chip h-10 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{anim.label}</ToggleGroupItem>
+                    <ToggleGroupItem key={anim.id} value={anim.id} title={anim.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{anim.label}</ToggleGroupItem>
                   ))}
                 </ToggleGroup>
               </FieldRow>
@@ -2036,8 +2039,7 @@ export function StudioGenerator({
     </div>
   );
 
-  const lookTab = (
-    <div>
+  const templateSizeSection = (
       <Section title="Template and size">
         <div className="grid grid-cols-2 gap-3">
           {!paperMode && (
@@ -2069,7 +2071,25 @@ export function StudioGenerator({
           </FieldRow>
         </div>
       </Section>
-      {paperKindPicker}
+  );
+
+  const savedLooks = (
+    <Section title="Saved looks" hint={templatesForMode.length ? undefined : 'Save a look to reuse it on the next campaign in this studio.'}>
+      <div className="chip-row">
+        {templatesForMode.slice(0, 8).map((item) => (
+          <button type="button" key={item.id} className="chip" onClick={() => loadTemplate(item)}>{item.name}</button>
+        ))}
+        <button type="button" className="chip is-dashed" onClick={saveTemplate} data-loading={savingTemplate || undefined} aria-busy={savingTemplate || undefined}>
+          <Sparkles size={14} aria-hidden /> Save this look
+        </button>
+      </div>
+    </Section>
+  );
+
+  const lookTab = (
+    <div>
+      {savedLooks}
+      {cutMode && templateSizeSection}
       {avatarMode && (
         <Section title="Portrait">
           <SliderField
@@ -2087,31 +2107,15 @@ export function StudioGenerator({
           <FieldRow label="Avatar shape">
             <ToggleGroup type="single" value={config.avatarShape ?? 'circle'} onValueChange={(value) => value && updateConfig('avatarShape', value as AvatarShape)} className="grid grid-cols-3 gap-2" aria-label="Avatar shape">
               {(['circle', 'rounded', 'square'] as AvatarShape[]).map((shape) => (
-                <ToggleGroupItem key={shape} value={shape} className="option-chip h-10 rounded-[6px] px-3 text-sm font-semibold capitalize hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{shape}</ToggleGroupItem>
+                <ToggleGroupItem key={shape} value={shape} className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold capitalize hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{shape}</ToggleGroupItem>
               ))}
             </ToggleGroup>
           </FieldRow>
         </Section>
       )}
-      {avatarMode && <CropSliders label="Crop avatar" crop={config.avatarCrop ?? defaultCrop} onChange={(crop) => updateConfig('avatarCrop', crop)} />}
-      <CropSliders label={cutMode ? 'Crop background' : 'Crop paper photo'} crop={config.imageCrop ?? defaultCrop} onChange={(crop) => updateConfig('imageCrop', crop)} />
       {handwritingMode ? (
         <>
           <Section title="Handwriting">
-            <FieldRow label="What kind of handwritten">
-              <RadioGroup value={config.handwritingKind} onValueChange={(value) => updateConfig('handwritingKind', value as StudioConfig['handwritingKind'])} className="grid gap-2" aria-label="Handwriting kind">
-                {handwritingKinds.map((kind) => {
-                  const id = `kind-${kind.id}`;
-                  const checked = config.handwritingKind === kind.id;
-                  return (
-                    <label key={kind.id} htmlFor={id} className={`option-card flex-row items-start gap-3 ${checked ? 'is-checked' : ''}`}>
-                      <RadioGroupItem id={id} value={kind.id} className="mt-0.5 h-5 w-5 flex-none border-input shadow-none" />
-                      <span className="flex flex-col gap-0.5"><strong>{kind.label}</strong><small>{kind.hint}</small></span>
-                    </label>
-                  );
-                })}
-              </RadioGroup>
-            </FieldRow>
             <FieldRow id="handwriting-style" label="Writing style" hint="Handwriting 1 to 7. The note uses the one you pick.">
               <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
                 {noteWritingStyles.map((style) => {
@@ -2132,20 +2136,6 @@ export function StudioGenerator({
                 })}
               </div>
             </FieldRow>
-            <div className="rounded-md border border-border bg-surface-2 p-4">
-              <SliderField id="realism" label="Realism" display={`${config.realism}%`} min={0} max={100} value={config.realism} onChange={(value) => updateConfig('realism', value)} />
-              <div className="flex justify-between text-xs font-semibold uppercase tracking-[.06em] text-muted-foreground"><span>Light</span><span>Strong</span></div>
-              <p className="helper mt-2">{handwritingKinds.find((item) => item.id === config.handwritingKind)?.hint}</p>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.ruledLines} onCheckedChange={(value) => updateConfig('ruledLines', value === true)} /> Ruled lines</label>
-              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.showMargin} onCheckedChange={(value) => updateConfig('showMargin', value === true)} /> Margin</label>
-              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleHandwriting} onCheckedChange={(value) => updateConfig('shuffleHandwriting', value === true)} /> Shuffle handwriting</label>
-              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleFinish} onCheckedChange={(value) => updateConfig('shuffleFinish', value === true)} /> Shuffle picture styles</label>
-            </div>
-            <button type="button" className="btn btn-quiet w-full" onClick={() => updateConfig('seed', Math.floor(Math.random() * 9999))}>
-              <Shuffle size={16} aria-hidden /> Reshuffle this row
-            </button>
           </Section>
           <Section title="Paper and ink">
             {finishSelect}
@@ -2155,7 +2145,6 @@ export function StudioGenerator({
               <ColorField id="ink-color" label="Ink" value={config.inkColor} onChange={(value) => updateConfig('inkColor', value)} />
             </div>
             {paperColorPicker}
-            {paperPhotoPicker}
             <div className="grid grid-cols-2 gap-2">
               <FileButton accept=".ttf,.otf,.woff,.woff2" onChange={uploadFont}><PenTool size={16} aria-hidden /> Font</FileButton>
               <FileButton accept="image/png,image/webp" onChange={(event) => uploadImage(event, 'signature')}><Upload size={16} aria-hidden /> Sign file</FileButton>
@@ -2164,7 +2153,6 @@ export function StudioGenerator({
                 <button type="button" className="btn btn-danger" onClick={() => clearUploadedImage('signature')}><Trash2 size={16} aria-hidden /> Remove signature</button>
               )}
             </div>
-            {typographySliders}
           </Section>
           {mode === 'handgif' && (
             <Section title="Writing GIF" hint="Pick a photographed hand. The nib stays on the letter as it writes. Download is always a GIF.">
@@ -2191,7 +2179,7 @@ export function StudioGenerator({
               <FieldRow label="Writing speed" hint={writingSpeedSpec(config.writingSpeed).hint}>
                 <ToggleGroup type="single" value={config.writingSpeed ?? 'medium'} onValueChange={(value) => value && updateConfig('writingSpeed', value as WritingSpeed)} className="grid grid-cols-3 gap-2" aria-label="Writing speed">
                   {writingSpeeds.map((speed) => (
-                    <ToggleGroupItem key={speed.id} value={speed.id} title={speed.hint} className="option-chip h-10 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{speed.label}</ToggleGroupItem>
+                    <ToggleGroupItem key={speed.id} value={speed.id} title={speed.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{speed.label}</ToggleGroupItem>
                   ))}
                 </ToggleGroup>
               </FieldRow>
@@ -2223,12 +2211,10 @@ export function StudioGenerator({
             <ColorField id="ink-color" label="Ink" value={config.inkColor} onChange={(value) => updateConfig('inkColor', value)} />
           </div>
           {paperColorPicker}
-          {paperPhotoPicker}
-          {typographySliders}
           <FieldRow label="Letter motion" hint={(config.textMotion ?? 'still') === 'still' ? 'Still letter. Download is a PNG.' : 'Portrait stays. The letter animates. Download is a GIF.'}>
             <ToggleGroup type="single" value={config.textMotion ?? 'type'} onValueChange={(value) => value && updateConfig('textMotion', value as TextMotion)} className="grid grid-cols-2 gap-2" aria-label="Avatar letter motion">
               {textMotions.map((motion) => (
-                <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{motion.label}</ToggleGroupItem>
+                <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{motion.label}</ToggleGroupItem>
               ))}
             </ToggleGroup>
           </FieldRow>
@@ -2257,6 +2243,98 @@ export function StudioGenerator({
               setConfig((current) => ({ ...current, layers: next }));
             }}
           />
+        </Section>
+      ) : (
+        <>
+          <Section title="Motion" hint={usesMotion(config) ? `${memeMotions.find((item) => item.id === config.animation)?.hint ?? 'Animated'}. Download this row or Generate exports a GIF.` : 'Still frame — exports a PNG.'}>
+            <ToggleGroup type="single" value={config.animation} onValueChange={(value) => value && updateConfig('animation', value as StudioConfig['animation'])} className="grid grid-cols-3 gap-2" aria-label="Meme motion">
+              {memeMotions.map((motion) => (
+                <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{motion.label}</ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </Section>
+          {activeLayer && (
+            <Section title={`${activeLayer.name} layer`}>
+              <div className="grid grid-cols-2 gap-3">
+                <SliderField id="layer-size" label="Size" display={`${activeLayer.fontSize}px`} min={20} max={120} value={activeLayer.fontSize} onChange={(value) => updateLayer({ fontSize: value })} />
+                <ColorField id="layer-color" label="Fill" value={activeLayer.color} onChange={(value) => updateLayer({ color: value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <SliderField id="layer-x" label="Left" display={`${Math.round(activeLayer.x * 100)}%`} min={0} max={80} value={Math.round(activeLayer.x * 100)} onChange={(value) => updateLayer({ x: value / 100 })} />
+                <SliderField id="layer-y" label="Top" display={`${Math.round(activeLayer.y * 100)}%`} min={0} max={88} value={Math.round(activeLayer.y * 100)} onChange={(value) => updateLayer({ y: value / 100 })} />
+              </div>
+              <ColorField id="layer-mark" label="Highlight colour" value={activeLayer.highlightColor || '#ffe566'} onChange={(value) => updateLayer({ highlightColor: value })} />
+              <FieldRow label="Align">
+                <ToggleGroup type="single" value={activeLayer.align} onValueChange={(value) => value && updateLayer({ align: value as TextLayer['align'] })} className="grid grid-cols-3 gap-2" aria-label={`${activeLayer.name} alignment`}>
+                  {(['left', 'center', 'right'] as const).map((align) => (
+                    <ToggleGroupItem key={align} value={align} className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold capitalize hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{align}</ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </FieldRow>
+              <label className="toggle-row">
+                <Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={activeLayer.outline} onCheckedChange={(value) => updateLayer({ outline: value === true })} />
+                Outline
+              </label>
+              <label className="toggle-row">
+                <Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={Boolean(activeLayer.boxFill)} onCheckedChange={(value) => updateLayer({ boxFill: value === true ? '#111111' : '' })} />
+                Box behind text
+              </label>
+              {activeLayer.boxFill ? (
+                <ColorField id="layer-box" label="Box fill" value={activeLayer.boxFill} onChange={(value) => updateLayer({ boxFill: value })} />
+              ) : null}
+              <FieldRow label="Text motion">
+                <ToggleGroup type="single" value={activeLayer.animation ?? 'still'} onValueChange={(value) => value && updateLayer({ animation: value as TextAnim })} className="grid grid-cols-3 gap-2" aria-label={`${activeLayer.name} animation`}>
+                  {textAnims.map((anim) => (
+                    <ToggleGroupItem key={anim.id} value={anim.id} title={anim.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{anim.label}</ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </FieldRow>
+              <button type="button" className="btn btn-danger self-start" onClick={removeLayer} disabled={config.layers.length <= 1} title={config.layers.length <= 1 ? 'Keep at least one layer' : undefined}><Trash2 size={16} aria-hidden /> Remove layer</button>
+            </Section>
+          )}
+        </>
+      )}
+      <MoreSettings>
+        {!cutMode && templateSizeSection}
+        {paperKindPicker}
+        {avatarMode && <CropSliders label="Crop avatar" crop={config.avatarCrop ?? defaultCrop} onChange={(crop) => updateConfig('avatarCrop', crop)} />}
+        <CropSliders label={cutMode ? 'Crop background' : 'Crop paper photo'} crop={config.imageCrop ?? defaultCrop} onChange={(crop) => updateConfig('imageCrop', crop)} />
+        {handwritingMode && (
+          <Section title="Handwriting detail">
+            <FieldRow label="What kind of handwritten">
+              <RadioGroup value={config.handwritingKind} onValueChange={(value) => updateConfig('handwritingKind', value as StudioConfig['handwritingKind'])} className="grid gap-2" aria-label="Handwriting kind">
+                {handwritingKinds.map((kind) => {
+                  const id = `kind-${kind.id}`;
+                  const checked = config.handwritingKind === kind.id;
+                  return (
+                    <label key={kind.id} htmlFor={id} className={`option-card flex-row items-start gap-3 ${checked ? 'is-checked' : ''}`}>
+                      <RadioGroupItem id={id} value={kind.id} className="mt-0.5 h-5 w-5 flex-none border-input shadow-none" />
+                      <span className="flex flex-col gap-0.5"><strong>{kind.label}</strong><small>{kind.hint}</small></span>
+                    </label>
+                  );
+                })}
+              </RadioGroup>
+            </FieldRow>
+            <div className="rounded-md border border-border bg-surface-2 p-4">
+              <SliderField id="realism" label="Realism" display={`${config.realism}%`} min={0} max={100} value={config.realism} onChange={(value) => updateConfig('realism', value)} />
+              <div className="flex justify-between text-xs font-semibold uppercase tracking-[.06em] text-muted-foreground"><span>Light</span><span>Strong</span></div>
+              <p className="helper mt-2">{handwritingKinds.find((item) => item.id === config.handwritingKind)?.hint}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.ruledLines} onCheckedChange={(value) => updateConfig('ruledLines', value === true)} /> Ruled lines</label>
+              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.showMargin} onCheckedChange={(value) => updateConfig('showMargin', value === true)} /> Margin</label>
+              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleHandwriting} onCheckedChange={(value) => updateConfig('shuffleHandwriting', value === true)} /> Shuffle handwriting</label>
+              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleFinish} onCheckedChange={(value) => updateConfig('shuffleFinish', value === true)} /> Shuffle picture styles</label>
+            </div>
+            <button type="button" className="btn btn-quiet w-full" onClick={() => updateConfig('seed', Math.floor(Math.random() * 9999))}>
+              <Shuffle size={16} aria-hidden /> Reshuffle this row
+            </button>
+          </Section>
+        )}
+        {(handwritingMode || avatarMode) && paperPhotoPicker}
+        {(handwritingMode || avatarMode) && typographySliders}
+        {avatarMode && (
+          <>
           {(config.textMotion ?? 'still') !== 'still' && (
             <Section title="Letter GIF" hint="Portrait stays on the page. The letter animates, then the last frames hold.">
               <div className="grid grid-cols-3 gap-2">
@@ -2275,55 +2353,10 @@ export function StudioGenerator({
           <div className="grid grid-cols-2 gap-2">
             <FileButton accept=".ttf,.otf,.woff,.woff2" onChange={uploadFont}><PenTool size={16} aria-hidden /> Custom font</FileButton>
           </div>
-        </Section>
-      ) : (
-        <>
-          <Section title="Motion" hint={usesMotion(config) ? `${memeMotions.find((item) => item.id === config.animation)?.hint ?? 'Animated'}. Download this row or Generate exports a GIF.` : 'Still frame — exports a PNG.'}>
-            <ToggleGroup type="single" value={config.animation} onValueChange={(value) => value && updateConfig('animation', value as StudioConfig['animation'])} className="grid grid-cols-3 gap-2" aria-label="Meme motion">
-              {memeMotions.map((motion) => (
-                <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{motion.label}</ToggleGroupItem>
-              ))}
-            </ToggleGroup>
-          </Section>
-          {activeLayer && (
-            <Section title={`${activeLayer.name} layer`}>
-              <div className="grid grid-cols-2 gap-3">
-                <SliderField id="layer-size" label="Size" display={`${activeLayer.fontSize}px`} min={20} max={120} value={activeLayer.fontSize} onChange={(value) => updateLayer({ fontSize: value })} />
-                <ColorField id="layer-color" label="Fill" value={activeLayer.color} onChange={(value) => updateLayer({ color: value })} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <SliderField id="layer-x" label="Left" display={`${Math.round(activeLayer.x * 100)}%`} min={0} max={80} value={Math.round(activeLayer.x * 100)} onChange={(value) => updateLayer({ x: value / 100 })} />
-                <SliderField id="layer-y" label="Top" display={`${Math.round(activeLayer.y * 100)}%`} min={0} max={88} value={Math.round(activeLayer.y * 100)} onChange={(value) => updateLayer({ y: value / 100 })} />
-              </div>
-              <ColorField id="layer-mark" label="Highlight colour" value={activeLayer.highlightColor || '#ffe566'} onChange={(value) => updateLayer({ highlightColor: value })} />
-              <FieldRow label="Align">
-                <ToggleGroup type="single" value={activeLayer.align} onValueChange={(value) => value && updateLayer({ align: value as TextLayer['align'] })} className="grid grid-cols-3 gap-2" aria-label={`${activeLayer.name} alignment`}>
-                  {(['left', 'center', 'right'] as const).map((align) => (
-                    <ToggleGroupItem key={align} value={align} className="option-chip h-10 rounded-[6px] px-3 text-sm font-semibold capitalize hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{align}</ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </FieldRow>
-              <label className="toggle-row">
-                <Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={activeLayer.outline} onCheckedChange={(value) => updateLayer({ outline: value === true })} />
-                Outline
-              </label>
-              <label className="toggle-row">
-                <Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={Boolean(activeLayer.boxFill)} onCheckedChange={(value) => updateLayer({ boxFill: value === true ? '#111111' : '' })} />
-                Box behind text
-              </label>
-              {activeLayer.boxFill ? (
-                <ColorField id="layer-box" label="Box fill" value={activeLayer.boxFill} onChange={(value) => updateLayer({ boxFill: value })} />
-              ) : null}
-              <FieldRow label="Text motion">
-                <ToggleGroup type="single" value={activeLayer.animation ?? 'still'} onValueChange={(value) => value && updateLayer({ animation: value as TextAnim })} className="grid grid-cols-3 gap-2" aria-label={`${activeLayer.name} animation`}>
-                  {textAnims.map((anim) => (
-                    <ToggleGroupItem key={anim.id} value={anim.id} title={anim.hint} className="option-chip h-10 rounded-[6px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:bg-accent data-[state=on]:text-primary">{anim.label}</ToggleGroupItem>
-                  ))}
-                </ToggleGroup>
-              </FieldRow>
-              <button type="button" className="btn btn-danger self-start" onClick={removeLayer} disabled={config.layers.length <= 1} title={config.layers.length <= 1 ? 'Keep at least one layer' : undefined}><Trash2 size={16} aria-hidden /> Remove layer</button>
-            </Section>
-          )}
+          </>
+        )}
+        {cutMode && (
+          <>
           <Section title="Data on the image">
             <FieldRow id="website-column" label="Website image column">
               <select id="website-column" className="field" value={config.websiteColumn ?? ''} onChange={(event) => updateConfig('websiteColumn', event.target.value)}>
@@ -2348,8 +2381,9 @@ export function StudioGenerator({
               <p className="mono text-sm text-muted-foreground">Estimate: {gifEstimateKb} KB · {config.gifFrames?.length ?? 12} frames</p>
             </Section>
           )}
-        </>
-      )}
+          </>
+        )}
+      </MoreSettings>
     </div>
   );
 
@@ -2429,7 +2463,7 @@ export function StudioGenerator({
 
   const inspector = (
     <Tabs value={deskTab} onValueChange={(value) => setDeskTab(value as DeskTab)} className="flex min-h-0 flex-1 flex-col">
-      <TabsList className="inspector-tabs grid h-auto w-full grid-cols-3 bg-surface-2 p-1" aria-label="Studio controls">
+      <TabsList className={`inspector-tabs grid h-auto w-full grid-cols-3 bg-fill p-1 ${desktop ? 'sr-only' : ''}`} aria-label="Studio controls">
         <TabsPrimitive.Trigger value="copy" className="inspector-tab"><Type size={16} aria-hidden /> Copy</TabsPrimitive.Trigger>
         <TabsPrimitive.Trigger value="look" className="inspector-tab"><Palette size={16} aria-hidden /> Look</TabsPrimitive.Trigger>
         <TabsPrimitive.Trigger value="ship" className="inspector-tab"><Send size={16} aria-hidden /> Ship</TabsPrimitive.Trigger>
@@ -2443,7 +2477,7 @@ export function StudioGenerator({
   );
 
   return (
-    <div className="studio-floor animate-rise">
+    <div className="studio-floor animate-rise" data-studio={mode}>
       <p className="sr-live" aria-live="polite" role="status">{announcement}</p>
       {error && (
         <Alert variant="destructive" className="border-destructive/40 bg-destructive/5 pr-14 text-foreground [&>svg]:text-destructive">
@@ -2455,8 +2489,8 @@ export function StudioGenerator({
       )}
 
       <header className="studio-toolbar">
-        <div className="min-w-0 flex-1">
-          <p className="eyebrow">{mode === 'avatar' ? 'Portrait desk' : handwritingMode ? (mode === 'handgif' ? 'Writing desk' : 'Paper desk') : 'Cutting room'}</p>
+        <div className="studio-title min-w-0">
+          <p className="eyebrow">{studioInfo(mode).label}</p>
           <h1 className="flex items-center gap-2">
             <input
               className="campaign-title"
@@ -2467,29 +2501,57 @@ export function StudioGenerator({
             <PenLine size={16} className="flex-none text-muted-foreground" aria-hidden />
           </h1>
         </div>
-        <div className="toolbar-actions flex flex-wrap gap-2">
-          <button type="button" className="btn btn-quiet" onClick={() => openList('source')}>
-            <FolderOpen size={16} aria-hidden /> Import list
-          </button>
-          <button type="button" className="btn btn-quiet" onClick={saveTemplate} data-loading={savingTemplate || undefined} aria-busy={savingTemplate || undefined}><Sparkles size={16} aria-hidden /> Save template</button>
-          <button
-            type="button"
-            className="btn btn-quiet"
-            onClick={() => void duplicateTemplate({
-              id: config.templateId || crypto.randomUUID(),
-              name: config.campaignName,
-              mode,
-              config,
-              updatedAt: new Date().toISOString(),
-              cloud: false,
-            })}
-          >
-            <Copy size={16} aria-hidden /> Copy template
-          </button>
+        <div className="segmented studio-steps" role="group" aria-label="Steps">
+          <button type="button" aria-pressed={listOpen} onClick={() => openList(contacts.length ? 'review' : 'source')}>Import</button>
+          {(['copy', 'look', 'ship'] as DeskTab[]).map((tab) => (
+            <button
+              type="button"
+              key={tab}
+              aria-pressed={deskTab === tab && (desktop || inspectorOpen)}
+              onClick={() => { setDeskTab(tab); if (!desktop) setInspectorOpen(true); }}
+            >
+              {tab === 'copy' ? 'Copy' : tab === 'look' ? 'Look' : 'Ship'}
+            </button>
+          ))}
+        </div>
+        <div className="toolbar-actions flex flex-wrap items-center justify-end gap-2">
           <button type="button" className="btn btn-quiet" onClick={saveCurrentCampaign} data-loading={saving || undefined} aria-busy={saving || undefined}><Save size={16} aria-hidden /> Save</button>
-          <button type="button" className="btn btn-ghost btn-icon hidden lg:inline-flex" aria-label="Keyboard shortcuts" onClick={() => setShortcutsOpen(true)}><Keyboard size={18} aria-hidden /></button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button type="button" className="btn btn-quiet btn-icon" aria-label="More campaign actions"><MoreHorizontal size={18} aria-hidden /></button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-52 border-border bg-popover">
+              <DropdownMenuItem className="min-h-11" onSelect={() => openList('source')}><FolderOpen aria-hidden /> Import a new list</DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11" onSelect={() => void saveTemplate()}><Sparkles aria-hidden /> Save this look</DropdownMenuItem>
+              <DropdownMenuItem
+                className="min-h-11"
+                onSelect={() => void duplicateTemplate({
+                  id: config.templateId || crypto.randomUUID(),
+                  name: config.campaignName,
+                  mode,
+                  config,
+                  updatedAt: new Date().toISOString(),
+                  cloud: false,
+                })}
+              >
+                <Copy aria-hidden /> Copy this look
+              </DropdownMenuItem>
+              <DropdownMenuItem className="min-h-11" onSelect={() => setShortcutsOpen(true)}><Keyboard aria-hidden /> Keyboard shortcuts</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <button type="button" className="btn btn-primary" onClick={generateBatch} disabled={!contacts.length && !generating} title={!contacts.length ? 'Import a list first' : undefined}>
+            {generating ? <><Pause size={16} aria-hidden /> Stop</> : <><Wand2 size={16} aria-hidden /> Generate {batchSize || ''}</>}
+          </button>
         </div>
       </header>
+
+      {generating && (
+        <div className="batch-progress" role="status" aria-live="polite">
+          <strong>Making {Math.min(progressDone + 1, progressTotal)} of {progressTotal}</strong>
+          <Progress value={progress} aria-label="Batch progress" className="h-2 flex-1 bg-fill [&>div]:bg-studio" />
+          <span className="text-sm text-muted-foreground tabular">{etaSeconds !== null ? `About ${etaSeconds} seconds left` : `${progress}%`}</span>
+        </div>
+      )}
 
       <ContactFilmstrip
         contacts={contacts}

@@ -43,7 +43,7 @@ export function ContactFilmstrip({
                 onFocus={() => {
                   if (index !== selectedRow) onSelect(index);
                 }}
-                className="contact-pill h-11 min-w-[140px] justify-start rounded-[6px] border-2 border-border bg-card px-3 text-foreground hover:bg-surface-2 hover:text-foreground data-[state=on]:border-primary data-[state=on]:bg-accent data-[state=on]:text-foreground"
+                className="contact-pill h-11 min-w-[140px] justify-start px-4 text-foreground hover:text-foreground data-[state=on]:text-foreground"
               >
                 {portrait && <DurablePortrait src={portrait} className="contact-pill-photo" size={28} />}
                 <span className="min-w-0">
