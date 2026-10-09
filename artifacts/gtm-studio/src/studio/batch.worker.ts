@@ -7,6 +7,7 @@ import { coverCropRect } from './types';
 type RenderMessage = { id: string; config: StudioConfig; contact: Contact };
 
 const sizes = {
+  Card: { width: 1500, height: 1000 },
   A4: { width: 1240, height: 1754 },
   LinkedIn: { width: 1080, height: 1080 },
   Email: { width: 1200, height: 628 },

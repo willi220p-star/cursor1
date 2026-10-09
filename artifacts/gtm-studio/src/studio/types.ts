@@ -29,6 +29,7 @@ export function studioLabel(mode: StudioMode) {
 }
 
 export const canvasSizes = {
+  Card: { width: 1500, height: 1000, label: 'Note card · 1500 × 1000' },
   A4: { width: 1240, height: 1754, label: 'A4 · 1240 × 1754' },
   LinkedIn: { width: 1080, height: 1080, label: 'LinkedIn · 1080 × 1080' },
   Email: { width: 1200, height: 628, label: 'Email / LinkedIn banner · 1200 × 628' },
@@ -265,7 +266,7 @@ export type PaperColorPreset = 'white' | 'cream' | 'watercolour' | 'custom';
 export type MemeMotion = 'still' | 'fade' | 'slide' | 'flip' | 'bounce' | 'pulse' | 'wobble' | 'pop' | 'shake' | 'rise' | 'zoom' | 'drift';
 export type PhotoMotion = 'still' | 'rise' | 'zoom' | 'drift';
 export type MemeEffect = 'none' | 'fire';
-export type HandwritingKind = 'neat' | 'errors' | 'uneven' | 'messy';
+export type HandwritingKind = 'natural' | 'neat' | 'errors' | 'uneven' | 'messy';
 export type WritingHandId = 'liner' | 'sweater' | 'fountain' | 'tripod';
 export type WritingSpeed = 'slow' | 'medium' | 'fast';
 
@@ -313,8 +314,9 @@ export const memeMotions: { id: MemeMotion; label: string; hint: string }[] = [
 ];
 
 export const handwritingKinds: { id: HandwritingKind; label: string; hint: string }[] = [
+  { id: 'natural', label: 'Natural', hint: 'Sits on the lines with a small human wobble. Every letter a little different, no crossed-out words.' },
   { id: 'neat', label: 'Neat handwritten', hint: 'Even lines, no mistakes. Written carefully on the ruling.' },
-  { id: 'errors', label: 'Simple errors', hint: 'Crossed-out words and small slips, then the right word.' },
+  { id: 'errors', label: 'One real slip', hint: 'Natural writing with one misspelt word crossed out mid-sentence, then written again.' },
   { id: 'uneven', label: 'Uneven lines', hint: 'Sentences are not on the same level — they drift like real paper.' },
   { id: 'messy', label: 'Messy notebook', hint: 'Uneven lines plus mistakes and ink flecks.' },
 ];
