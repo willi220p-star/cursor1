@@ -60,7 +60,8 @@ export const defaultLayers: TextLayer[] = [
 export function defaultConfig(mode: StudioMode): StudioConfig {
   const paper = mode === 'handwritten' || mode === 'avatar' || mode === 'handgif';
   const handwriting = mode === 'handwritten' || mode === 'handgif';
-  const channel = paper ? 'A4' : 'LinkedIn';
+  // Notes default to a landscape card: the whole note shows in an email or LinkedIn preview.
+  const channel = handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn';
   const layout = mode === 'avatar' ? avatarInNoteLayout(channel, 0.24, finishPaperZone('desk')) : null;
   const paperKind: PaperKind = mode === 'avatar' ? 'white-paper' : 'notebook';
   return {
@@ -79,7 +80,8 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
           ? '{company}_{first_name}_{row}_writing'
           : `{company}_{row}_${mode}`,
     channel,
-    fontSize: mode === 'avatar' ? 28 : handwriting ? 40 : 44,
+    // Notes are sized to fill the default card.
+    fontSize: mode === 'avatar' ? 28 : handwriting ? 50 : 44,
     inkColor: '#173765',
     paperColor: paperKind === 'white-paper' ? '#ffffff' : '#f7f0e1',
     paperColorPreset: paperKind === 'white-paper' ? 'white' : 'cream',
@@ -99,7 +101,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     showMargin: paperKind === 'notebook',
     shuffleHandwriting: false,
     shuffleFinish: false,
-    handwritingKind: 'errors',
+    handwritingKind: 'natural',
     writingHand: 'liner',
     writingSpeed: 'medium',
     signature: '– Alex',

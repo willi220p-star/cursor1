@@ -1,5 +1,6 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode, TextLayer } from './types';
+import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
 import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
 import { renderMerge } from './merge';
 import { loadArtefactFonts } from './fonts';
@@ -377,6 +378,7 @@ function paperBackground(
   height: number,
   scale: number,
   seed: number,
+  rules?: number[],
 ) {
   const kind = config.paperKind ?? (config.template === 'Diary' || config.template === 'diary' ? 'diary' : config.template?.includes('White') ? 'white-paper' : 'notebook');
   context.fillStyle = paperColorFor(config);
@@ -431,10 +433,14 @@ function paperBackground(
     context.strokeStyle = kind === 'diary' ? 'rgba(73,120,170,.12)' : 'rgba(73,120,170,.22)';
     context.lineWidth = 1.35 * scale;
     context.lineCap = 'round';
-    const top = y + (kind === 'diary' ? 78 : 92) * scale;
-    const step = 36 * scale;
-    for (let lineY = top; lineY < y + height - 28 * scale; lineY += step) {
-      const wobble = kind === 'white-paper' ? 0 : (unitRand(seed, Math.round(lineY)) - 0.5) * 2.4 * scale;
+    // Notes pass the grid their writing sits on; other paper keeps the fixed ruling.
+    const ruleYs = rules ?? [];
+    if (!rules) {
+      const top = y + (kind === 'diary' ? 78 : 92) * scale;
+      for (let lineY = top; lineY < y + height - 28 * scale; lineY += 36 * scale) ruleYs.push(lineY);
+    }
+    for (const lineY of ruleYs) {
+      const wobble = kind === 'white-paper' ? 0 : (unitRand(seed, Math.round(lineY)) - 0.5) * (rules ? 1.2 : 2.4) * scale;
       context.beginPath();
       context.moveTo(x + (kind === 'notebook' ? 52 : 44) * scale, lineY + wobble);
       context.bezierCurveTo(
@@ -518,7 +524,8 @@ function strikeThrough(
   for (let pass = 0; pass < 2; pass++) {
     context.lineWidth = Math.max(2.2, fontSize * (0.09 + pass * 0.03));
     context.beginPath();
-    const mid = y + fontSize * (0.36 + pass * 0.1) + (unitRand(seed, salt + pass) - 0.5) * 3 * unit;
+    // y is the baseline; strike through the middle of the letters.
+    const mid = y - fontSize * (0.34 - pass * 0.08) + (unitRand(seed, salt + pass) - 0.5) * 3 * unit;
     context.moveTo(x - 4, mid);
     const bump = (unitRand(seed, salt + 4 + pass) - 0.5) * fontSize * 0.22 * unit;
     context.quadraticCurveTo(x + width * 0.5, mid + bump, x + width + 5, mid + (unitRand(seed, salt + 8 + pass) - 0.5) * 3);
@@ -539,17 +546,43 @@ function drawInkWord(
   unit: number,
   extraTracking: number,
 ) {
-  const size = fontSize * (1 + (unitRand(seed, salt) - 0.5) * 0.14 * unit);
-  const dy = (unitRand(seed, salt + 1) - 0.5) * Math.max(fontSize * 0.18, 4.5) * unit;
-  const rot = (unitRand(seed, salt + 2) - 0.5) * 0.09 * unit;
+  // y is the baseline: the word sits on the line, a hair above it more often than through it.
+  const size = fontSize * (1 + (unitRand(seed, salt) - 0.5) * 0.08 * unit);
+  const dy = (unitRand(seed, salt + 1) - 0.62) * fontSize * 0.05 * unit;
+  const rot = (unitRand(seed, salt + 2) - 0.5) * 0.05 * unit;
+  const wordAlpha = 0.84 + 0.16 * unitRand(seed, salt + 9);
   context.save();
+  context.textBaseline = 'alphabetic';
   context.font = `${size}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
-  context.globalAlpha *= 0.78 + 0.22 * unitRand(seed, salt + 9);
   context.translate(x, y + dy);
   context.rotate(rot);
-  context.scale(0.97 + unitRand(seed, salt + 6) * 0.07 * unit, 1);
-  context.fillText(word, 0, 0);
+  context.scale(0.98 + unitRand(seed, salt + 6) * 0.04 * unit, 1);
   const width = context.measureText(word).width;
+  const letters = Array.from(word);
+  if (unit < 0.05 || letters.length < 2) {
+    context.globalAlpha *= wordAlpha;
+    context.fillText(word, 0, 0);
+  } else {
+    // No two letters alike: each one gets its own tiny size, tilt, lift and ink pressure.
+    let prefix = '';
+    letters.forEach((letter, index) => {
+      const at = context.measureText(prefix).width;
+      prefix += letter;
+      const key = salt * 31 + index * 7;
+      context.save();
+      context.globalAlpha *= wordAlpha * (0.86 + 0.14 * unitRand(seed, key + 3));
+      context.translate(at, (unitRand(seed, key) - 0.5) * fontSize * 0.035 * unit);
+      context.rotate((unitRand(seed, key + 1) - 0.5) * 0.07 * unit);
+      const grow = 1 + (unitRand(seed, key + 2) - 0.5) * 0.07 * unit;
+      context.scale(grow, grow);
+      context.fillText(letter, 0, 0);
+      if (unitRand(seed, key + 4) < 0.18 * unit) {
+        context.lineWidth = Math.max(0.6, fontSize * 0.018);
+        context.strokeText(letter, 0, 0);
+      }
+      context.restore();
+    });
+  }
   context.restore();
   if (unit > 0.38 && unitRand(seed, salt * 71) < 0.22 * unit) {
     context.save();
@@ -557,7 +590,7 @@ function drawInkWord(
     context.beginPath();
     context.ellipse(
       x + width * 0.55,
-      y + fontSize * 0.78,
+      y - fontSize * 0.04,
       Math.max(1.4, fontSize * 0.045),
       Math.max(1, fontSize * 0.03),
       rot,
@@ -895,6 +928,112 @@ function drawWritingPen(context: CanvasRenderingContext2D, x: number, y: number,
   context.restore();
 }
 
+/** Handwriting fonts differ a lot in letter height; this evens them out so a size looks the same in every style. */
+const handwritingScales: Record<string, number> = {
+  Caveat: 1.08,
+  'Nanum Pen Script': 1.22,
+  Handlee: 0.96,
+  'Cedarville Cursive': 1.02,
+  'Patrick Hand': 1,
+  'Shadows Into Light': 1.02,
+  'Gloria Hallelujah': 0.84,
+};
+
+function handwritingScale(fontFamily: string) {
+  return handwritingScales[fontFamily] ?? 1;
+}
+
+function drawScrawledSignature(
+  context: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  baseline: number,
+  size: number,
+  seed: number,
+  unit: number,
+) {
+  // A quick sign-off: leaning, a little compressed, finished with a loose flourish, never a ruler line.
+  const lean = -0.035 - unitRand(seed, 131) * 0.04;
+  context.save();
+  context.translate(x, baseline);
+  context.rotate(lean);
+  context.scale(0.9, 1);
+  const width = drawInkWord(context, text, 0, 0, size, 'Dancing Script', seed, 120, Math.max(0.45, unit), 0) * 0.9;
+  const end = width / 0.9;
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  const loop = size * (0.16 + unitRand(seed, 133) * 0.12);
+  for (let pass = 0; pass < 2; pass++) {
+    context.globalAlpha = pass === 0 ? 0.82 : 0.38;
+    context.lineWidth = Math.max(1.1, size * (pass === 0 ? 0.034 : 0.022));
+    context.beginPath();
+    context.moveTo(end + size * 0.06, size * 0.02);
+    context.bezierCurveTo(
+      end + size * 0.38, size * 0.06 + pass * 2,
+      end + size * 0.22, loop + size * 0.2,
+      end * (0.35 + unitRand(seed, 135) * 0.2), loop + size * 0.08 + pass * 1.5,
+    );
+    context.quadraticCurveTo(end * 0.08, loop * 0.75, -size * 0.12, loop * 0.95 + size * 0.04);
+    context.stroke();
+  }
+  context.restore();
+  return width;
+}
+
+function noteParts(config: StudioConfig, contact: Contact) {
+  const copy = renderMerge(config.copy, contact);
+  const rawPostscript = config.postscript ? renderMerge(config.postscript, contact).trim() : '';
+  const postscript = rawPostscript && !/^p\.?\s*s\b/i.test(rawPostscript) ? `P.S. ${rawPostscript}` : rawPostscript;
+  const signatureText = config.signature ? renderMerge(config.signature, contact).replace(/^\s+/, '') : '';
+  return { copy, postscript, signatureText };
+}
+
+function writingWidth(fontSize: number, paperX: number, paperW: number, leftX: number, scale: number) {
+  return Math.max(fontSize * 4, Math.min(paperW * 0.74, paperX + paperW - 44 * scale - leftX));
+}
+
+/**
+ * The largest writing size, up to the one chosen, at which the whole note (message, sign-off, P.S.)
+ * still fits on the paper's rules. Long notes and wide fonts shrink a little instead of running off.
+ */
+function fitHandwritingGrid(
+  context: CanvasRenderingContext2D,
+  config: StudioConfig,
+  contact: Contact,
+  fontFamily: string,
+  paper: { paperX: number; paperY: number; paperW: number; paperH: number },
+  scale: number,
+  hasSignatureImage: boolean,
+) {
+  const { paperX, paperY, paperW, paperH } = paper;
+  const { copy, postscript, signatureText } = noteParts(config, contact);
+  const leftX = paperX + paperW * config.noteX;
+  const fontScale = handwritingScale(fontFamily);
+  const floor = Math.min(config.fontSize, Math.max(16, config.fontSize * 0.6));
+  let fontSize = config.fontSize;
+  context.save();
+  for (;;) {
+    const grid = buildRuleGrid({ paperY, paperH, noteY: config.noteY, fontSize, lineSpacing: config.lineSpacing, scale });
+    const width = writingWidth(fontSize * scale, paperX, paperW, leftX, scale);
+    const linesAt = (text: string, factor: number) => {
+      if (!text) return 0;
+      context.font = `${fontSize * scale * factor * fontScale}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
+      return wrapLines(context, text, width).length;
+    };
+    const needed = rowsNeeded({
+      copyLines: linesAt(copy, 1),
+      signatureText: Boolean(signatureText),
+      signatureImage: hasSignatureImage,
+      postscriptLines: linesAt(postscript, 0.88),
+    });
+    if (needed <= rowsAvailable(grid) || fontSize <= floor) {
+      context.restore();
+      return { grid, fontSize };
+    }
+    fontSize = Math.max(floor, fontSize * 0.94);
+  }
+}
+
 function drawHandwriting(
   context: CanvasRenderingContext2D,
   config: StudioConfig,
@@ -907,26 +1046,30 @@ function drawHandwriting(
   seed: number,
   scale: number,
   animationPhase: number,
-  signatureImage?: CanvasImageSource | null,
+  grid: RuleGrid,
+  signatureImage?: HTMLImageElement | null,
   writingHand?: HTMLImageElement | null,
 ): { x: number; y: number; show: boolean; lift: number; tilt: number } {
-  const kind = config.handwritingKind ?? 'errors';
+  const kind = config.handwritingKind ?? 'natural';
   const wantErrors = kind === 'errors' || kind === 'messy';
   const wantUneven = kind === 'uneven' || kind === 'messy';
   const wantNeat = kind === 'neat';
-  const unit = wantNeat ? Math.min((config.realism ?? 40) / 100, 0.2) : (config.realism ?? 70) / 100;
+  const realism = (config.realism ?? 70) / 100;
+  // "Natural" keeps the small human wobble but caps it, so writing never leaves its line.
+  const unit = wantNeat ? Math.min(realism, 0.2) : kind === 'natural' ? Math.min(0.55, Math.max(0.25, realism * 0.6)) : realism;
   const uneven = wantUneven ? Math.max(unit, 0.72) : unit;
   const fontSize = config.fontSize * scale;
   const extraTracking = (config.letterSpacing ?? 0) * scale;
-  const copy = renderMerge(config.copy, contact);
-  const postscript = config.postscript ? renderMerge(config.postscript, contact) : '';
+  const { copy, postscript, signatureText } = noteParts(config, contact);
   const writing = config.mode === 'handgif';
-  const fullText = `${copy}${config.signature ? renderMerge(config.signature, contact) : ''}${postscript}`;
+  const fullText = `${copy}${signatureText}${postscript}`;
   const reveal = writing ? Math.max(0, Math.min(1, (animationPhase - 0.04) / 0.88)) : 1;
   const budget = writing ? { left: writingCost(fullText) * reveal } : null;
+  const leftX = paperX + paperW * config.noteX;
+  const maxWidth = writingWidth(fontSize, paperX, paperW, leftX, scale);
   let pen = {
-    x: paperX + paperW * config.noteX,
-    y: paperY + config.noteY * paperH + fontSize * 0.4,
+    x: leftX,
+    y: grid.firstBaseline - fontSize * 0.28,
     show: writing && reveal > 0 && reveal < 0.97,
     lift: 10 * scale,
     tilt: -0.16,
@@ -935,9 +1078,7 @@ function drawHandwriting(
   if (!writing) context.globalAlpha = animationPhase;
   context.fillStyle = config.inkColor;
   context.strokeStyle = config.inkColor;
-  context.textBaseline = 'top';
-  context.font = `${fontSize}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
-  const maxWidth = paperW * 0.74;
+  context.textBaseline = 'alphabetic';
 
   const takeChars = (word: string, trailingSpace = false) => {
     if (!budget) return word;
@@ -954,16 +1095,20 @@ function drawHandwriting(
     return shown;
   };
 
-  const paintLines = (text: string, startY: number, allowMistakes: boolean, lineSalt: number) => {
+  /** Writes text on consecutive rules starting at `startRow`; returns the next free row. */
+  const paintLines = (text: string, startRow: number, allowMistakes: boolean, lineSalt: number, sizeFactor = 1, extraTilt = 0) => {
+    const size = fontSize * sizeFactor * handwritingScale(fontFamily);
+    context.font = `${size}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
     const lines = wrapLines(context, text, maxWidth);
     const mistakeSlots = new Set<string>();
     if (allowMistakes && wantErrors) {
-      const mistakeBudget = 1 + Math.floor(unit * 2);
+      // A real slip happens mid-sentence: never the first line, never the first word of a line.
+      const mistakeBudget = kind === 'messy' ? 2 : 1;
       const candidates: string[] = [];
       lines.forEach((line, lineIndex) => {
         if (lineIndex === 0) return;
         line.split(/\s+/).forEach((word, wordIndex) => {
-          if (word.length > 3) candidates.push(`${lineIndex}:${wordIndex}`);
+          if (wordIndex > 0 && /^[A-Za-z]{5,}[,.]?$/.test(word)) candidates.push(`${lineIndex}:${wordIndex}`);
         });
       });
       for (let i = 0; i < mistakeBudget && candidates.length; i++) {
@@ -973,17 +1118,16 @@ function drawHandwriting(
     }
     lines.forEach((line, lineIndex) => {
       const words = line ? line.split(/\s+/) : [''];
-      const lineJitterX = wantNeat ? 0 : (unitRand(seed, lineIndex + 11 + lineSalt) - 0.5) * (wantUneven ? 28 : 12) * scale * uneven;
-      const lineJitterY = wantNeat
+      const row = startRow + lineIndex;
+      const lineJitterX = wantNeat ? 0 : (unitRand(seed, lineIndex + 11 + lineSalt) - 0.5) * (wantUneven ? 26 : 8) * scale * uneven;
+      // Each line starts on its own rule; it may sit a pixel or two off, then comes back next line.
+      const lineDrift = wantNeat ? 0 : (unitRand(seed, lineIndex + 17 + lineSalt) - 0.6) * grid.step * (wantUneven ? 0.12 : 0.045) * uneven;
+      const lineRot = extraTilt + (wantNeat
         ? 0
-        : (unitRand(seed, lineIndex + 17 + lineSalt) - 0.5) * (wantUneven ? 26 : 3.8) * scale * uneven;
-      const slope = wantUneven ? lineIndex * 9 * scale * uneven : 0;
-      const lineRot = wantNeat
-        ? 0
-        : ((unitRand(seed, lineIndex + 23 + lineSalt) - 0.5) * (wantUneven ? 5.2 : 1.8) * uneven * Math.PI) / 180;
-      let cursor = paperX + paperW * config.noteX + lineJitterX;
-      const drawY = startY + lineIndex * fontSize * config.lineSpacing + lineJitterY + slope;
-      let baseline = 0;
+        : ((unitRand(seed, lineIndex + 23 + lineSalt) - 0.5) * (wantUneven ? 2.6 : 0.9) * uneven * Math.PI) / 180);
+      let cursor = leftX + lineJitterX;
+      const drawY = baselineAt(grid, row) + lineDrift;
+      let wobble = 0;
       context.save();
       context.translate(cursor, drawY);
       context.rotate(lineRot);
@@ -996,38 +1140,27 @@ function drawHandwriting(
           return;
         }
         const salt = lineIndex * 97 + wordIndex * 13 + seed + lineSalt;
-        const gap = fontSize * (0.34 + (unitRand(seed, salt) - 0.5) * (wantNeat ? 0.02 : 0.14) * unit);
-        baseline += wantUneven ? (unitRand(seed, salt + 21) - 0.5) * fontSize * 0.16 * uneven : (unitRand(seed, salt + 21) - 0.5) * fontSize * 0.08 * unit;
-        baseline *= wantUneven ? 0.92 : 0.72;
-        const wordY = drawY + baseline;
+        const gap = size * (0.34 + (unitRand(seed, salt) - 0.5) * (wantNeat ? 0.02 : 0.16) * unit);
+        // Words bob gently along the line instead of stepping further and further away from it.
+        wobble = wobble * 0.5 + (unitRand(seed, salt + 21) - 0.55) * size * (wantUneven ? 0.06 : 0.025) * uneven;
+        const wordY = drawY + wobble;
         if (mistakeSlots.has(`${lineIndex}:${wordIndex}`) && visible === word) {
           context.save();
           context.globalAlpha *= 0.62;
           const wrong = botchedWord(word, salt);
-          const wrongWidth = drawInkWord(
-            context,
-            wrong,
-            cursor,
-            wordY,
-            fontSize * 0.97,
-            fontFamily,
-            seed,
-            salt + 8,
-            unit,
-            extraTracking,
-          );
+          const wrongWidth = drawInkWord(context, wrong, cursor, wordY, size * 0.97, fontFamily, seed, salt + 8, unit, extraTracking);
           context.restore();
-          strikeThrough(context, cursor, wordY, wrongWidth, fontSize, unit, seed, salt);
-          cursor += wrongWidth + Math.max(gap, fontSize * 0.42);
+          strikeThrough(context, cursor, wordY, wrongWidth, size, unit, seed, salt);
+          cursor += wrongWidth + Math.max(gap, size * 0.42);
         }
-        const width = drawInkWord(context, visible, cursor, wordY, fontSize, fontFamily, seed, salt, wantNeat ? unit * 0.4 : unit, extraTracking);
-        const nibX = cursor + Math.max(width * 0.88, width - fontSize * 0.12);
+        const width = drawInkWord(context, visible, cursor, wordY, size, fontFamily, seed, salt, wantNeat ? unit * 0.4 : unit, extraTracking);
+        const nibX = cursor + Math.max(width * 0.88, width - size * 0.12);
         const across = (nibX - paperX) / Math.max(1, paperW);
         const lifting = visible !== word ? 0 : 8 * scale;
         cursor += width + (visible === word ? gap : 0);
         pen = {
           x: nibX,
-          y: wordY + fontSize * 0.38,
+          y: wordY - size * 0.28,
           show: writing && reveal < 0.97,
           lift: lifting,
           tilt: -0.2 + across * 0.26,
@@ -1035,58 +1168,50 @@ function drawHandwriting(
       });
       context.restore();
     });
-    return startY + Math.max(1, lines.length) * fontSize * config.lineSpacing;
+    return startRow + Math.max(1, lines.length);
   };
 
-  let cursorY = paperY + config.noteY * paperH;
-  cursorY = paintLines(copy, cursorY, true, 0);
+  let row = paintLines(copy, 0, true, 0);
 
-  if (config.signature || signatureImage) {
-    cursorY += fontSize * 0.35;
-    const sigSize = Math.max(34, config.fontSize * 1.18) * scale;
-    const sigX = paperX + paperW * 0.52 + (unitRand(seed, 77) - 0.5) * 10 * scale * unit;
-    const sigY = cursorY + (unitRand(seed, 81) - 0.5) * 6 * scale * unit;
-    if (config.signature) {
-      context.font = `${sigSize}px "Dancing Script", "${fontFamily}", Caveat, cursive`;
-      const signature = takeChars(renderMerge(config.signature, contact));
+  if (signatureText || signatureImage) {
+    // The sign-off gets its own line, one blank line below the message, set to the right.
+    row += 1;
+    const sigBaseline = baselineAt(grid, row);
+    const sigSize = Math.min(fontSize * 1.2, grid.step * 1.35);
+    if (signatureText) {
+      const signature = takeChars(signatureText);
       if (signature) {
-        const sigWidth = drawInkWord(context, signature, sigX, sigY, sigSize, 'Dancing Script', seed, 120, unit, extraTracking * 0.4);
+        context.font = `${sigSize}px "Dancing Script", "${fontFamily}", Caveat, cursive`;
+        const planned = context.measureText(signatureText).width * 0.9;
+        const sigX = Math.max(leftX + maxWidth * 0.38, leftX + maxWidth - planned - sigSize * 0.6)
+          + (unitRand(seed, 77) - 0.5) * 10 * scale * unit;
+        const sigY = sigBaseline + (unitRand(seed, 81) - 0.6) * grid.step * 0.05;
+        const sigWidth = drawScrawledSignature(context, signature, sigX, sigY, sigSize, seed, unit);
         const across = (sigX + sigWidth - paperX) / Math.max(1, paperW);
         pen = {
           x: sigX + sigWidth,
-          y: sigY + sigSize * 0.36,
+          y: sigY - sigSize * 0.28,
           show: writing && reveal < 0.97,
           lift: budget && budget.left > 0 ? 0 : 6 * scale,
           tilt: -0.18 + across * 0.22,
         };
-        context.save();
-        context.globalAlpha = 0.55 + 0.25 * unit;
-        context.lineWidth = Math.max(1.2, sigSize * 0.045);
-        context.lineCap = 'round';
-        context.beginPath();
-        context.moveTo(sigX - 4 * scale, sigY + sigSize * 0.82);
-        context.bezierCurveTo(
-          sigX + sigWidth * 0.35,
-          sigY + sigSize * 0.92,
-          sigX + sigWidth * 0.7,
-          sigY + sigSize * 0.72,
-          sigX + sigWidth + 8 * scale,
-          sigY + sigSize * 0.86,
-        );
-        context.stroke();
-        context.restore();
       }
     }
     if (signatureImage && (!writing || reveal > 0.78)) {
-      context.drawImage(signatureImage, paperX + paperW * 0.55, sigY - sigSize * 0.15, paperW * 0.28, paperH * 0.16);
+      const imageH = grid.step * 1.9;
+      const ratio = signatureImage.naturalWidth && signatureImage.naturalHeight ? signatureImage.naturalWidth / signatureImage.naturalHeight : 2.4;
+      const imageW = Math.min(maxWidth * 0.5, imageH * ratio);
+      const imageX = leftX + maxWidth - imageW;
+      const imageRow = signatureText ? row + 1 : row;
+      context.drawImage(signatureImage, imageX, baselineAt(grid, imageRow) - imageH * 0.78, imageW, imageH);
+      if (signatureText) row += 1;
     }
-    cursorY = sigY + sigSize * 1.35;
-    context.font = `${fontSize}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
+    row += 1;
   }
 
   if (postscript) {
-    cursorY += fontSize * 0.2;
-    paintLines(postscript, cursorY, false, 400);
+    // A P.S. is squeezed in last: a little smaller and tilted, still on the lines.
+    paintLines(postscript, row, false, 400, 0.88, -0.012);
   }
   if (pen.show && !writingHand) drawWritingPen(context, pen.x, pen.y, Math.max(3.4, fontSize * 0.22), seed + Math.round(reveal * 80));
   context.restore();
@@ -1309,7 +1434,12 @@ export async function renderStudioCanvas(
     context.save();
     roundedRect(context, paperX, paperY, paperW, paperH, radius);
     context.clip();
-    paperBackground(context, config, paperX, paperY, paperW, paperH, scale, seed);
+    const signature = config.mode === 'avatar' ? null : await loadImage(config.signatureImage);
+    const fitted = config.mode === 'avatar'
+      ? null
+      : fitHandwritingGrid(context, config, contact, fontFamily, { paperX, paperY, paperW, paperH }, scale, Boolean(signature));
+    const grid = fitted?.grid ?? null;
+    paperBackground(context, config, paperX, paperY, paperW, paperH, scale, seed, grid?.rules);
     if (finish === 'scanned') {
       context.fillStyle = 'rgba(40,34,28,.045)';
       for (let i = 0; i < 140; i++) {
@@ -1333,8 +1463,8 @@ export async function renderStudioCanvas(
       if (config.mode === 'avatar') {
         drawTypedNote(context, config, contact, width, height, scale, animationPhase);
       } else {
-        const signature = await loadImage(config.signatureImage);
-        pen = drawHandwriting(context, config, contact, paperX, paperY, paperW, paperH, fontFamily, seed, scale, animationPhase, signature, writingHand);
+        const fit = fitted ?? fitHandwritingGrid(context, config, contact, fontFamily, { paperX, paperY, paperW, paperH }, scale, Boolean(signature));
+        pen = drawHandwriting(context, { ...config, fontSize: fit.fontSize }, contact, paperX, paperY, paperW, paperH, fontFamily, seed, scale, animationPhase, fit.grid, signature, writingHand);
       }
     }
     context.restore();
