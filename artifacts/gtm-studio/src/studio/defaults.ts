@@ -94,7 +94,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     noteY: mode === 'avatar' ? 0.08 : 0.16,
     realism: mode === 'avatar' ? 8 : 78,
     seed: 7,
-    finish: 'desk',
+    finish: mode === 'handwritten' ? 'photo' : 'desk',
     surface: 'pine',
     deskColor: '#c08a4a',
     ruledLines: paperKind !== 'white-paper',

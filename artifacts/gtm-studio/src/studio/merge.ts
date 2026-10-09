@@ -55,6 +55,26 @@ export function unresolvedTags(text: string, contact: Contact) {
   return [...rendered.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]);
 }
 
+/**
+ * Tags with no fallback that come out empty for this row because the cell is blank,
+ * e.g. "loved how fast {company} moved" when the company cell is empty.
+ */
+export function blankTags(text: string, contact: Contact) {
+  const blanks: string[] = [];
+  for (const match of text.matchAll(/\{([^{}]+)\}/g)) {
+    const expression = match[1];
+    if (expression.includes('|')) continue;
+    const rendered = renderMerge(match[0], contact);
+    if (!rendered.trim() && !blanks.includes(expression.trim())) blanks.push(expression.trim());
+  }
+  return blanks;
+}
+
+/** Everything that would make this row read wrong: unknown tags and blank cells without a fallback. */
+export function missingTags(text: string, contact: Contact) {
+  return [...new Set([...unresolvedTags(text, contact), ...blankTags(text, contact)])];
+}
+
 export function safeFilename(pattern: string, contact: Contact, extension: string) {
   const base = renderMerge(pattern, contact)
     .normalize('NFKD')

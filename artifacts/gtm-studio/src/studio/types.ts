@@ -259,9 +259,9 @@ export type TextLayer = {
   boxFill?: string;
 };
 
-export type NoteFinish = 'desk' | 'scanned' | 'soft-shadow' | 'clean';
+export type NoteFinish = 'photo' | 'desk' | 'scanned' | 'soft-shadow' | 'clean';
 export type DeskSurface = 'pine' | 'walnut' | 'oak' | 'maple' | 'mahogany' | 'custom';
-export type PaperKind = 'notebook' | 'white-paper' | 'diary';
+export type PaperKind = 'notebook' | 'white-paper' | 'diary' | 'card';
 export type PaperColorPreset = 'white' | 'cream' | 'watercolour' | 'custom';
 export type MemeMotion = 'still' | 'fade' | 'slide' | 'flip' | 'bounce' | 'pulse' | 'wobble' | 'pop' | 'shake' | 'rise' | 'zoom' | 'drift';
 export type PhotoMotion = 'still' | 'rise' | 'zoom' | 'drift';
@@ -340,6 +340,7 @@ export const paperKinds: { id: PaperKind; label: string; hint: string }[] = [
   { id: 'notebook', label: 'Notebook', hint: 'Ruled lines and a red margin, like a school pad.' },
   { id: 'white-paper', label: 'White paper', hint: 'Plain A4 sheet. No lines unless you turn them on.' },
   { id: 'diary', label: 'Diary', hint: 'Bound page with a date line and a gutter on the left.' },
+  { id: 'card', label: 'Plain card', hint: 'Thick cream card stock with no lines. The writing still follows hidden guide lines, so it stays level.' },
 ];
 
 export const paperColorPresets: { id: PaperColorPreset; label: string; hex: string }[] = [
@@ -350,6 +351,7 @@ export const paperColorPresets: { id: PaperColorPreset; label: string; hex: stri
 ];
 
 export const noteFinishes: { id: NoteFinish; label: string; hint: string }[] = [
+  { id: 'photo', label: 'Phone photo', hint: 'Snapped on a phone: the card on the desk at a slight angle, window light, a pen beside it.' },
   { id: 'desk', label: 'Photo on a desk', hint: 'The sheet sits on wood with a drop shadow around it.' },
   { id: 'soft-shadow', label: 'Flat lay', hint: 'Soft shadow on a light table — no wood grain.' },
   { id: 'scanned', label: 'Scanned', hint: 'Scanner bed, photocopy grain, slightly crooked.' },
@@ -398,6 +400,18 @@ export function isHandwritingFamily(font: string) {
   return (handwritingFonts as readonly string[]).includes(font) || (retiredHandwritingFonts as readonly string[]).includes(font);
 }
 
+export type StillFormat = 'jpg' | 'png';
+
+export const stillFormats: { id: StillFormat; label: string; hint: string }[] = [
+  { id: 'jpg', label: 'Email JPG', hint: 'About 150 KB. Loads fast in inboxes and keeps deliverability healthy.' },
+  { id: 'png', label: 'Full PNG', hint: 'Lossless, often over 1 MB. Use for print or when size does not matter.' },
+];
+
+/** The file type a still export uses: notes go out as email-sized JPGs unless PNG is chosen. */
+export function stillFormatFor(config: Pick<StudioConfig, 'mode' | 'imageFormat'>): StillFormat {
+  return config.imageFormat ?? (config.mode === 'handwritten' ? 'jpg' : 'png');
+}
+
 export type StudioConfig = {
   id?: string;
   templateId?: string;
@@ -431,6 +445,10 @@ export type StudioConfig = {
   shuffleHandwriting: boolean;
   shuffleFinish: boolean;
   handwritingKind: HandwritingKind;
+  /** Notes: grow short notes to fill the card (long notes always shrink to fit). Default on. */
+  autoFit?: boolean;
+  /** Still exports: small JPG for email, or full-quality PNG. Notes default to JPG. */
+  imageFormat?: StillFormat;
   writingHand: WritingHandId;
   writingSpeed: WritingSpeed;
   signatureImage?: string;

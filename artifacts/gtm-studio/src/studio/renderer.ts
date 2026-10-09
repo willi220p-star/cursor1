@@ -1,7 +1,7 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode, TextLayer } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
-import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
+import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, stillFormatFor, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
 import { renderMerge } from './merge';
 import { loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
@@ -386,7 +386,23 @@ function paperBackground(
   if (config.paperColorPreset === 'watercolour') {
     paintWatercolour(context, x, y, width, height, seed, scale);
   }
-  if (kind !== 'white-paper' || config.paperColorPreset === 'watercolour') {
+  if (kind === 'card') {
+    // Card stock: fine even tooth, a faint pressed edge, no ruling.
+    paintPaperGrain(context, x, y, width, height, seed, scale * 0.6);
+    const edge = 14 * scale;
+    const shade = (x0: number, y0: number, x1: number, y1: number) => {
+      const gradient = context.createLinearGradient(x0, y0, x1, y1);
+      gradient.addColorStop(0, 'rgba(90, 70, 40, .07)');
+      gradient.addColorStop(1, 'rgba(90, 70, 40, 0)');
+      return gradient;
+    };
+    context.fillStyle = shade(x, 0, x + edge, 0);
+    context.fillRect(x, y, edge, height);
+    context.fillStyle = shade(x + width, 0, x + width - edge, 0);
+    context.fillRect(x + width - edge, y, edge, height);
+    context.fillStyle = shade(0, y + height, 0, y + height - edge);
+    context.fillRect(x, y + height - edge, width, edge);
+  } else if (kind !== 'white-paper' || config.paperColorPreset === 'watercolour') {
     paintPaperGrain(context, x, y, width, height, seed, scale * (kind === 'white-paper' ? 0.45 : 1));
   } else {
     paintPaperGrain(context, x, y, width, height, seed, scale * 0.35);
@@ -428,7 +444,7 @@ function paperBackground(
     }
   }
 
-  const lined = config.ruledLines ?? kind !== 'white-paper';
+  const lined = config.ruledLines ?? (kind !== 'white-paper' && kind !== 'card');
   if (lined) {
     context.strokeStyle = kind === 'diary' ? 'rgba(73,120,170,.12)' : 'rgba(73,120,170,.22)';
     context.lineWidth = 1.35 * scale;
@@ -992,9 +1008,21 @@ function writingWidth(fontSize: number, paperX: number, paperW: number, leftX: n
   return Math.max(fontSize * 4, Math.min(paperW * 0.74, paperX + paperW - 44 * scale - leftX));
 }
 
+export type NoteFit = {
+  grid: RuleGrid;
+  /** The writing size actually used, in the same units as config.fontSize. */
+  fontSize: number;
+  /** Rows the note takes at that size, and rows the paper has. */
+  needed: number;
+  available: number;
+  /** Rows needed and available at the size that was chosen, before any fitting. */
+  chosen: { needed: number; available: number };
+};
+
 /**
- * The largest writing size, up to the one chosen, at which the whole note (message, sign-off, P.S.)
- * still fits on the paper's rules. Long notes and wide fonts shrink a little instead of running off.
+ * Picks the writing size so the whole note (message, sign-off, P.S.) sits on the paper's rules.
+ * Long notes and wide fonts shrink a little instead of running off. With auto-size on (the default),
+ * short notes grow a little so the card does not look half empty.
  */
 function fitHandwritingGrid(
   context: CanvasRenderingContext2D,
@@ -1004,15 +1032,12 @@ function fitHandwritingGrid(
   paper: { paperX: number; paperY: number; paperW: number; paperH: number },
   scale: number,
   hasSignatureImage: boolean,
-) {
+): NoteFit {
   const { paperX, paperY, paperW, paperH } = paper;
   const { copy, postscript, signatureText } = noteParts(config, contact);
   const leftX = paperX + paperW * config.noteX;
   const fontScale = handwritingScale(fontFamily);
-  const floor = Math.min(config.fontSize, Math.max(16, config.fontSize * 0.6));
-  let fontSize = config.fontSize;
-  context.save();
-  for (;;) {
+  const measure = (fontSize: number): NoteFit => {
     const grid = buildRuleGrid({ paperY, paperH, noteY: config.noteY, fontSize, lineSpacing: config.lineSpacing, scale });
     const width = writingWidth(fontSize * scale, paperX, paperW, leftX, scale);
     const linesAt = (text: string, factor: number) => {
@@ -1026,11 +1051,31 @@ function fitHandwritingGrid(
       signatureImage: hasSignatureImage,
       postscriptLines: linesAt(postscript, 0.88),
     });
-    if (needed <= rowsAvailable(grid) || fontSize <= floor) {
-      context.restore();
-      return { grid, fontSize };
+    const available = rowsAvailable(grid);
+    return { grid, fontSize, needed, available, chosen: { needed, available } };
+  };
+  context.save();
+  try {
+    const floor = Math.min(config.fontSize, Math.max(16, config.fontSize * 0.6));
+    const first = measure(config.fontSize);
+    const chosen = first.chosen;
+    let fit = first;
+    const done = () => ({ ...fit, chosen });
+    if (fit.needed > fit.available) {
+      while (fit.needed > fit.available && fit.fontSize > floor) fit = measure(Math.max(floor, fit.fontSize * 0.94));
+      return done();
     }
-    fontSize = Math.max(floor, fontSize * 0.94);
+    if (config.autoFit === false) return done();
+    // Grow while the note would still fill under about 80% of the rules, leaving a spare line.
+    const ceiling = config.fontSize * 1.35;
+    while (fit.fontSize < ceiling && fit.needed / Math.max(1, fit.available) < 0.6) {
+      const bigger = measure(Math.min(ceiling, fit.fontSize * 1.05));
+      if (bigger.needed > bigger.available - 1 || bigger.needed / Math.max(1, bigger.available) > 0.8) break;
+      fit = bigger;
+    }
+    return done();
+  } finally {
+    context.restore();
   }
 }
 
@@ -1320,6 +1365,141 @@ async function ensureArtefactTypefaces(config: StudioConfig) {
   await document.fonts.load(`${size}px "${family}"`);
 }
 
+/**
+ * How a note fits its paper for one row, without drawing it: the size used and rows needed vs available.
+ * Returns null for studios that are not handwriting.
+ */
+export async function measureNoteFit(config: StudioConfig, contact: Contact) {
+  if (config.mode !== 'handwritten' && config.mode !== 'handgif') return null;
+  await ensureArtefactTypefaces(config);
+  const target = dimensions[config.channel] ?? dimensions.LinkedIn;
+  const seed = (config.seed ?? 7) + contact.row;
+  const finish = config.shuffleFinish ? pickFrom(['desk', 'scanned', 'soft-shadow', 'clean'] as NoteFinish[], seed) : (config.finish ?? 'desk');
+  const zone = config.noteZone ?? finishPaperZone(finish);
+  const fontFamily = config.shuffleHandwriting ? pickFrom(handwritingFonts, seed + 11) : (config.fontFamily || 'Homemade Apple');
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return null;
+  const paper = { paperX: target.width * zone.x, paperY: target.height * zone.y, paperW: target.width * zone.width, paperH: target.height * zone.height };
+  const fit = fitHandwritingGrid(context, config, contact, fontFamily, paper, 1, Boolean(config.signatureImage));
+  return { fontSize: fit.fontSize, needed: fit.needed, available: fit.available, chosen: fit.chosen, firstBaseline: fit.grid.firstBaseline, step: fit.grid.step };
+}
+
+/** A ballpoint lying on the desk, resting across the card's lower right corner. */
+function drawPenProp(
+  context: CanvasRenderingContext2D,
+  paperX: number,
+  paperY: number,
+  paperW: number,
+  paperH: number,
+  scale: number,
+  seed: number,
+) {
+  const length = paperH * 0.92;
+  const thick = Math.max(10 * scale, length * 0.058);
+  const cx = paperX + paperW * (0.985 + unitRand(seed, 301) * 0.02);
+  const cy = paperY + paperH * (0.6 + unitRand(seed, 302) * 0.08);
+  const angle = -1.18 - unitRand(seed, 303) * 0.16;
+  const capsule = (x0: number, half: number, r: number) => {
+    context.beginPath();
+    context.moveTo(x0, -r);
+    context.lineTo(half, -r);
+    context.arc(half, 0, r, -Math.PI / 2, Math.PI / 2);
+    context.lineTo(x0, r);
+    context.closePath();
+  };
+  context.save();
+  context.translate(cx, cy);
+  context.rotate(angle);
+  const half = length / 2;
+  // Contact shadow first, offset away from the window light.
+  context.save();
+  context.translate(thick * 0.55, thick * 0.9);
+  context.filter = `blur(${Math.round(thick * 0.45)}px)`;
+  context.fillStyle = 'rgba(20, 12, 6, 0.38)';
+  capsule(-half, half, thick / 2);
+  context.fill();
+  context.restore();
+  // Barrel with a soft highlight along its length.
+  const barrel = context.createLinearGradient(0, -thick / 2, 0, thick / 2);
+  barrel.addColorStop(0, '#3a4a78');
+  barrel.addColorStop(0.28, '#6c7db0');
+  barrel.addColorStop(0.42, '#273458');
+  barrel.addColorStop(1, '#141b30');
+  context.fillStyle = barrel;
+  capsule(-half + thick * 1.6, half, thick / 2);
+  context.fill();
+  // Metal tip cone and nib.
+  const metal = context.createLinearGradient(0, -thick / 2, 0, thick / 2);
+  metal.addColorStop(0, '#d9dce2');
+  metal.addColorStop(0.35, '#ffffff');
+  metal.addColorStop(1, '#7c818c');
+  context.fillStyle = metal;
+  context.beginPath();
+  context.moveTo(-half + thick * 1.7, -thick / 2);
+  context.lineTo(-half + thick * 0.25, -thick * 0.09);
+  context.lineTo(-half + thick * 0.25, thick * 0.09);
+  context.lineTo(-half + thick * 1.7, thick / 2);
+  context.closePath();
+  context.fill();
+  context.fillStyle = '#2b2b2b';
+  context.beginPath();
+  context.arc(-half + thick * 0.22, 0, thick * 0.09, 0, Math.PI * 2);
+  context.fill();
+  // Grip ring and pocket clip near the top end.
+  context.fillStyle = metal;
+  context.fillRect(-half + thick * 1.6, -thick / 2, thick * 0.35, thick);
+  context.fillRect(half - thick * 4.2, -thick / 2, thick * 0.3, thick);
+  context.fillRect(half - thick * 4, -thick * 0.62, thick * 3.2, thick * 0.2);
+  context.restore();
+}
+
+/**
+ * Makes the finished canvas read like a phone photo: the far edge a little narrower (camera tilted
+ * toward the desk), warm window light from the top left, darker corners and faint sensor grain.
+ */
+function applyPhoneCamera(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D, seed: number, scale: number) {
+  const { width, height } = canvas;
+  const source = document.createElement('canvas');
+  source.width = width;
+  source.height = height;
+  source.getContext('2d')?.drawImage(canvas, 0, 0);
+  const far = 0.93 - unitRand(seed, 311) * 0.03;
+  const zoom = 1 / far + 0.012;
+  const lean = (unitRand(seed, 312) - 0.5) * width * 0.03;
+  const strip = Math.max(1, Math.round(2 * scale));
+  context.save();
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
+  for (let y = 0; y < height; y += strip) {
+    const t = y / height;
+    const across = zoom * (far + (1 - far) * t);
+    const along = zoom * (far + (1 - far) * 0.5);
+    const sourceY = height / 2 + (y - height / 2) / along;
+    const drawW = width * across;
+    context.drawImage(source, 0, sourceY, width, strip / along, (width - drawW) / 2 + lean * (1 - t), y, drawW, strip + 0.5);
+  }
+  const light = context.createRadialGradient(width * 0.12, -height * 0.1, 0, width * 0.12, -height * 0.1, Math.hypot(width, height) * 0.9);
+  light.addColorStop(0, 'rgba(255, 244, 222, 0.16)');
+  light.addColorStop(0.55, 'rgba(255, 236, 205, 0.04)');
+  light.addColorStop(1, 'rgba(255, 236, 205, 0)');
+  context.fillStyle = light;
+  context.fillRect(0, 0, width, height);
+  const vignette = context.createRadialGradient(width / 2, height * 0.48, Math.min(width, height) * 0.35, width / 2, height * 0.5, Math.hypot(width, height) * 0.62);
+  vignette.addColorStop(0, 'rgba(18, 10, 4, 0)');
+  vignette.addColorStop(1, 'rgba(18, 10, 4, 0.24)');
+  context.fillStyle = vignette;
+  context.fillRect(0, 0, width, height);
+  const dots = Math.round((width * height) / 700);
+  for (let i = 0; i < dots; i++) {
+    const v = unitRand(seed, 400 + i);
+    context.fillStyle = v > 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)';
+    context.fillRect(unitRand(seed, 9000 + i) * width, unitRand(seed, 19000 + i) * height, scale, scale);
+  }
+  context.restore();
+}
+
 export async function renderStudioCanvas(
   config: StudioConfig,
   contact: Contact,
@@ -1341,7 +1521,10 @@ export async function renderStudioCanvas(
     const seed = (config.seed ?? 7) + contact.row;
     const finishes: NoteFinish[] = ['desk', 'scanned', 'soft-shadow', 'clean'];
     const surfaces: DeskSurface[] = ['pine', 'walnut', 'oak', 'maple', 'mahogany'];
-    const finish = config.shuffleFinish ? pickFrom(finishes, seed) : (config.finish ?? 'desk');
+    const chosenFinish = config.shuffleFinish ? pickFrom(finishes, seed) : (config.finish ?? 'desk');
+    // A phone photo is the desk scene seen through a camera: same paper and wood, then angled and lit.
+    const phonePhoto = chosenFinish === 'photo';
+    const finish: NoteFinish = phonePhoto ? 'desk' : chosenFinish;
     const surface = config.shuffleFinish ? pickFrom(surfaces, seed + 3) : migrateDeskSurface(config.surface);
     const fontFamily = config.mode === 'avatar'
       ? (config.fontFamily || 'Space Grotesk')
@@ -1489,6 +1672,10 @@ export async function renderStudioCanvas(
     context.stroke();
     context.restore();
     context.restore();
+    if (phonePhoto) {
+      if (!writingHand) drawPenProp(context, paperX, paperY, paperW, paperH, scale, seed);
+      applyPhoneCamera(canvas, context, seed, scale);
+    }
   } else {
     const palettes: Record<string, [string, string]> = {
       'Bold contrast': ['#f2aa21', '#6e2d91'],
@@ -1617,9 +1804,10 @@ export function canvasToBlob(canvas: HTMLCanvasElement, type = 'image/png', qual
   );
 }
 
-export async function renderStaticAsset(config: StudioConfig, contact: Contact, quality = 0.9) {
+export async function renderStaticAsset(config: StudioConfig, contact: Contact) {
   const canvas = await renderStudioCanvas(config, contact);
-  return canvasToBlob(canvas, 'image/png', quality);
+  // JPG at 0.86 keeps a full-size note card near 150 KB with no visible loss; PNG is lossless.
+  return stillFormatFor(config) === 'jpg' ? canvasToBlob(canvas, 'image/jpeg', 0.86) : canvasToBlob(canvas, 'image/png');
 }
 
 export async function renderPreview(

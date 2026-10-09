@@ -1,6 +1,8 @@
 import {
   ArrowRight,
+  Check,
   CircleAlert,
+  Info,
   Copy,
   Crop,
   Download,
@@ -52,10 +54,12 @@ import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
 import { batchConcurrency, runQueue } from '@/studio/batch-queue';
 import { loadArtefactFonts } from '@/studio/fonts';
-import { unresolvedTags, safeFilename, renderMerge } from '@/studio/merge';
+import { missingTags, safeFilename, renderMerge } from '@/studio/merge';
+import { countWords, noteAdvice, type NoteFitInfo } from '@/studio/note-advice';
 import {
   canvasToBlob,
   deskTextureUrls,
+  measureNoteFit,
   dimensions,
   isLiveGif,
   modeLabel,
@@ -106,6 +110,8 @@ import {
   defaultCrop,
   deskSurfaces,
   finishPaperZone,
+  stillFormatFor,
+  stillFormats,
   guessAvatarColumn,
   guessColumn,
   handwritingKinds,
@@ -261,6 +267,12 @@ function exportIsAnimated(mode: StudioMode, config: StudioConfig) {
   return mode === 'memes' && (usesMotion(config) || usesPhotoMotion(config) || isLiveGif(config));
 }
 
+/** gif for moving exports; notes and avatar stills use their chosen still format. */
+function exportExtension(mode: StudioMode, config: StudioConfig) {
+  if (exportIsAnimated(mode, config)) return 'gif';
+  return mode === 'handwritten' || mode === 'avatar' ? stillFormatFor(config) : 'png';
+}
+
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -349,16 +361,33 @@ export function StudioGenerator({
   const gallerySamples = useMemo(() => [...libraryMemes, ...memeSamples], [libraryMemes]);
   const contact = contacts[selectedRow] ?? sampleContacts[0];
   const activeLayer = config.layers.find((layer) => layer.id === activeLayerId) ?? config.layers[0];
-  const invalid = unresolvedTags(
-    mode === 'memes' || mode === 'gif'
-      ? config.layers.map((layer) => layer.text).join(' ')
-      : `${config.copy}\n${config.message}`,
-    contact,
+  const tagText = mode === 'memes' || mode === 'gif'
+    ? config.layers.map((layer) => layer.text).join(' ')
+    : `${config.copy}\n${config.message}\n${config.postscript ?? ''}\n${config.signature ?? ''}`;
+  const invalid = missingTags(tagText, contact);
+  // Every row whose note would read wrong: a tag with no column, or a blank cell with no fallback.
+  const rowsReadingWrong = useMemo(
+    () => contacts.flatMap((row, index) => {
+      const tags = missingTags(tagText, row);
+      return tags.length ? [{ index, row: row.row, tags }] : [];
+    }),
+    [contacts, tagText],
   );
+  const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
+  useEffect(() => {
+    if (mode !== 'handwritten' && mode !== 'handgif') return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void measureNoteFit(config, contact).then((fit) => { if (!cancelled) setNoteFit(fit); }).catch(() => undefined);
+    }, 250);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [config, contact, mode]);
+  const noteWords = countWords(`${renderMerge(config.copy, contact)} ${config.postscript ? renderMerge(config.postscript, contact) : ''}`);
+  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit);
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
   const animatedExport = exportIsAnimated(mode, config);
-  const previewFilename = safeFilename(config.filename, contact, animatedExport ? 'gif' : 'png');
+  const previewFilename = safeFilename(config.filename, contact, exportExtension(mode, config));
 
   useEffect(() => {
     void loadArtefactFonts();
@@ -1200,8 +1229,8 @@ export function StudioGenerator({
       return {
         ...current,
         paperKind: kind,
-        template: kind === 'notebook' ? 'Notebook' : kind === 'diary' ? 'Diary' : 'White paper',
-        ruledLines: kind !== 'white-paper',
+        template: kind === 'notebook' ? 'Notebook' : kind === 'diary' ? 'Diary' : kind === 'card' ? 'Plain card' : 'White paper',
+        ruledLines: kind !== 'white-paper' && kind !== 'card',
         showMargin: kind === 'notebook',
         paperColorPreset: nextPreset,
         paperColor: keepColor ? current.paperColor : (preset?.hex || current.paperColor),
@@ -1343,7 +1372,7 @@ export function StudioGenerator({
   };
 
   const renderOne = async (current: Contact, signal?: AbortSignal, lane = 0) => {
-    const extension = exportIsAnimated(mode, config) ? 'gif' : 'png';
+    const extension = exportExtension(mode, config);
     const blob = exportIsAnimated(mode, config)
       ? await renderGifAsset(config, current, signal)
       : mode === 'handwritten' || mode === 'avatar'
@@ -1395,7 +1424,7 @@ export function StudioGenerator({
         asset = {
           id: crypto.randomUUID(),
           row: current.row,
-          filename: safeFilename(config.filename, current, animated ? 'gif' : 'png'),
+          filename: safeFilename(config.filename, current, exportExtension(mode, config)),
           blob: new Blob(),
           url: '',
           bytes: 0,
@@ -1873,8 +1902,8 @@ export function StudioGenerator({
   );
 
   const paperKindPicker = paperMode ? (
-    <Section title="Page" hint="A4 sheet. Notebook, white paper, or diary — same size, different ruling.">
-      <ToggleGroup type="single" value={config.paperKind} onValueChange={(value) => value && applyPaperKind(value as PaperKind)} className="grid grid-cols-3 gap-2" aria-label="Paper kind">
+    <Section title="Page" hint="Notebook, white paper, diary or a plain card. Same size, different ruling.">
+      <ToggleGroup type="single" value={config.paperKind} onValueChange={(value) => value && applyPaperKind(value as PaperKind)} className="grid grid-cols-2 gap-2" aria-label="Paper kind">
         {paperKinds.map((item) => (
           <ToggleGroupItem key={item.id} value={item.id} title={item.hint} className="option-chip h-11 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{item.label}</ToggleGroupItem>
         ))}
@@ -1994,9 +2023,15 @@ export function StudioGenerator({
             }}
             onAnnounce={setAnnouncement}
           />
-          <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{config.copy.length} chars · {copyLines} lines</span></span>}>
-            <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} />
+          <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{handwritingMode ? `${noteWords} words` : `${config.copy.length} chars · ${copyLines} lines`}</span></span>}>
+            <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} aria-describedby={handwritingMode ? 'note-length' : undefined} />
           </FieldRow>
+          {handwritingMode && (
+            <p id="note-length" className={`note-length note-length-${lengthAdvice.tone}`} role="status">
+              {lengthAdvice.tone === 'warn' ? <CircleAlert size={15} aria-hidden /> : lengthAdvice.tone === 'info' ? <Info size={15} aria-hidden /> : <Check size={15} aria-hidden />}
+              <span>{lengthAdvice.text}</span>
+            </p>
+          )}
           <div className="rounded-md bg-surface-2 p-3 text-sm leading-relaxed whitespace-pre-wrap">{renderMerge(config.copy, contact)}</div>
           <FieldRow id="signature" label={avatarMode ? 'Typed signature' : 'Signature'}>
             <input id="signature" className="field" value={config.signature} onChange={(event) => updateConfig('signature', event.target.value)} />
@@ -2073,7 +2108,22 @@ export function StudioGenerator({
           ))}
         </div>
         {invalid.length > 0 && (
-          <p className="inline-flex items-start gap-2 text-sm text-warning"><CircleAlert size={16} className="mt-0.5 flex-none" aria-hidden /> Unknown in this row: {invalid.join(', ')}. Check the column names or add a fallback.</p>
+          <p className="inline-flex items-start gap-2 text-sm text-warning"><CircleAlert size={16} className="mt-0.5 flex-none" aria-hidden /> This row has no {invalid.map((tag) => `{${tag}}`).join(', ')}, so the note would read wrong. Fill the cell or add a fallback like {'{'}{invalid[0]}|your team{'}'}.</p>
+        )}
+        {rowsReadingWrong.length > 0 && (
+          <div className="load-error row-check" role="status">
+            <p className="font-semibold">{rowsReadingWrong.length} of {contacts.length} {contacts.length === 1 ? 'row reads' : 'rows read'} wrong</p>
+            <ul className="mt-1 flex flex-wrap gap-1.5">
+              {rowsReadingWrong.slice(0, 8).map((item) => (
+                <li key={item.index}>
+                  <button type="button" className="tag-chip" onClick={() => setSelectedRow(item.index)} title={`Show row ${item.row}`}>
+                    Row {item.row}: no {item.tags.map((tag) => tag.split('|')[0]).join(', ')}
+                  </button>
+                </li>
+              ))}
+              {rowsReadingWrong.length > 8 && <li className="text-sm text-muted-foreground">and {rowsReadingWrong.length - 8} more</li>}
+            </ul>
+          </div>
         )}
       </Section>
     </div>
@@ -2362,6 +2412,7 @@ export function StudioGenerator({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.ruledLines} onCheckedChange={(value) => updateConfig('ruledLines', value === true)} /> Ruled lines</label>
+              {handwritingMode && <label className="toggle-row" title="Short notes grow to fill the card. Long notes always shrink to fit."><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.autoFit !== false} onCheckedChange={(value) => updateConfig('autoFit', value === true)} /> Auto-size writing</label>}
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.showMargin} onCheckedChange={(value) => updateConfig('showMargin', value === true)} /> Margin</label>
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleHandwriting} onCheckedChange={(value) => updateConfig('shuffleHandwriting', value === true)} /> Shuffle handwriting</label>
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleFinish} onCheckedChange={(value) => updateConfig('shuffleFinish', value === true)} /> Shuffle picture styles</label>
@@ -2434,6 +2485,15 @@ export function StudioGenerator({
           <input id="filename" className="field" value={config.filename} onChange={(event) => updateConfig('filename', event.target.value)} />
           <p className="mono mt-2 truncate text-sm text-muted-foreground" title={previewFilename}>{previewFilename}</p>
         </FieldRow>
+        {(mode === 'handwritten' || (mode === 'avatar' && !animatedExport)) && (
+          <FieldRow label="File type" hint={stillFormats.find((item) => item.id === stillFormatFor(config))?.hint}>
+            <ToggleGroup type="single" value={stillFormatFor(config)} onValueChange={(value) => value && updateConfig('imageFormat', value as StudioConfig['imageFormat'])} className="grid grid-cols-2 gap-2" aria-label="File type">
+              {stillFormats.map((item) => (
+                <ToggleGroupItem key={item.id} value={item.id} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{item.label}</ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </FieldRow>
+        )}
       </Section>
       <Section title="Generate">
         {generating ? (
@@ -2610,7 +2670,7 @@ export function StudioGenerator({
         currentMode={mode}
         currentContacts={contacts}
         savedMap={config.fieldMap as FieldAssignment[] | undefined}
-        copyForTags={cutMode ? config.layers.map((layer) => layer.text).join(' ') : `${config.copy}\n${config.message}`}
+        copyForTags={cutMode ? config.layers.map((layer) => layer.text).join(' ') : `${config.copy}\n${config.message}\n${config.postscript ?? ''}\n${config.signature ?? ''}`}
         onImport={onImportResult}
         onInsertTag={insertTag}
       />

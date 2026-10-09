@@ -1165,3 +1165,10 @@ body > div:last-child > span + img { display: inline !important; }
 .panel-fallback p { color: var(--muted-foreground); font-size: 14px; max-width: 52ch; }
 .load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--destructive) 35%, var(--border)); border-radius: 16px; background: color-mix(in srgb, var(--destructive) 6%, var(--card)); font-size: 14px; }
 .load-error.row-check { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 6px; text-align: left; }
+
+/* Note length advice -------------------------------------------------------------------------- */
+.note-length { display: flex; align-items: flex-start; gap: 8px; margin-top: -4px; font-size: 13px; line-height: 1.45; color: var(--muted-foreground); }
+.note-length svg { flex: none; margin-top: 2px; }
+.note-length-good svg { color: var(--success); }
+.note-length-info svg { color: var(--muted-foreground); }
+.note-length-warn { color: var(--warning); }
