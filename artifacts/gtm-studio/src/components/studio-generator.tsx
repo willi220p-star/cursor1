@@ -2589,7 +2589,7 @@ export function StudioGenerator({
         <div className="batch-progress" role="status" aria-live="polite">
           <strong>Making {Math.min(progressDone + 1, progressTotal)} of {progressTotal}</strong>
           <Progress value={progress} aria-label="Batch progress" className="h-2 flex-1 bg-fill [&>div]:bg-studio" />
-          <span className="text-sm text-muted-foreground tabular">{etaSeconds !== null ? `About ${etaSeconds} seconds left` : `${progress}%`}{laneCount > 1 ? `, ${laneCount} at a time` : ''}</span>
+          <span className="text-sm text-muted-foreground tabular">{etaSeconds === null ? `${progress}%` : etaSeconds < 2 ? 'Almost done' : `About ${etaSeconds} seconds left`}{laneCount > 1 ? `, ${laneCount} at a time` : ''}</span>
         </div>
       )}
 

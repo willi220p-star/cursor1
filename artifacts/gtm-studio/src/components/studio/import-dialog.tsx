@@ -325,7 +325,7 @@ export function ImportDialog({
           </div>
 
           {rowIssues.length > 0 && (
-            <div className="load-error flex-col items-start" role="status">
+            <div className="load-error row-check" role="status">
               <strong className="text-sm">{rowIssues.length} {rowIssues.length === 1 ? 'row needs' : 'rows need'} a look before you generate</strong>
               <ul className="m-0 list-disc pl-5 text-sm">
                 {rowIssues.slice(0, 6).map((issue) => <li key={issue.row}>{describeIssue(issue)}</li>)}
