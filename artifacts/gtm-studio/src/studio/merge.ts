@@ -1,4 +1,12 @@
-import type { Contact } from './types';
+import { stripHookMarks, wrapHook } from './hook-mark';
+import { hookColumnAliases, internalContactKeys, type Contact } from './types';
+
+export type MergeOptions = {
+  /** Column {hook} reads from; guessed from common names when unset or not in this row. */
+  hookColumn?: string;
+  /** Wrap the hook in private-use sentinels for the canvas renderer. Never for anything shown as text. */
+  markHook?: boolean;
+};
 
 export function normalizeHeader(value: string) {
   return value.trim().toLowerCase().replace(/\s+/g, '_');
@@ -25,11 +33,42 @@ function lookupAliases(key: string) {
   return mergeAliases[key] ?? [key];
 }
 
-export function renderMerge(text: string, contact: Contact) {
+const has = (contact: Contact, key: string) => Object.prototype.hasOwnProperty.call(contact, key);
+
+/**
+ * The column {hook} reads for this row: the chosen one, else a column named like a personal
+ * line (hook, icebreaker, personalization, first_line...). Link columns never count.
+ */
+export function resolveHookColumn(contact: Contact, hookColumn?: string) {
+  if (hookColumn) {
+    if (has(contact, hookColumn)) return hookColumn;
+    if (has(contact, normalizeHeader(hookColumn))) return normalizeHeader(hookColumn);
+  }
+  const keys = Object.keys(contact).filter((key) => !internalContactKeys.includes(key) && !/url|link/i.test(key));
+  const lower = keys.map((key) => normalizeHeader(key));
+  for (const alias of hookColumnAliases) {
+    const index = lower.indexOf(alias);
+    if (index >= 0) return keys[index];
+  }
+  for (const alias of hookColumnAliases) {
+    const index = lower.findIndex((key) => key.includes(alias));
+    if (index >= 0) return keys[index];
+  }
+  return '';
+}
+
+export function renderMerge(text: string, contact: Contact, options: MergeOptions = {}) {
   return text.replace(/\{([^{}]+)\}/g, (full, expression: string) => {
     const parts = expression.split('|').map((part) => part.trim());
     const key = normalizeHeader(parts[0] ?? '');
     if (key === 'row') return String(contact.row);
+    if (key === 'hook') {
+      const column = resolveHookColumn(contact, options.hookColumn);
+      if (column) {
+        const value = stripHookMarks(String(contact[column] ?? '')).trim() || parts[1] || '';
+        return value && options.markHook ? wrapHook(value) : value;
+      }
+    }
     const aliases = lookupAliases(key);
     const takeFirst = key === 'first_name';
     for (const alias of aliases) {
@@ -50,8 +89,8 @@ export function renderMerge(text: string, contact: Contact) {
   });
 }
 
-export function unresolvedTags(text: string, contact: Contact) {
-  const rendered = renderMerge(text, contact);
+export function unresolvedTags(text: string, contact: Contact, options: MergeOptions = {}) {
+  const rendered = renderMerge(text, contact, { hookColumn: options.hookColumn });
   return [...rendered.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]);
 }
 
@@ -59,24 +98,24 @@ export function unresolvedTags(text: string, contact: Contact) {
  * Tags with no fallback that come out empty for this row because the cell is blank,
  * e.g. "loved how fast {company} moved" when the company cell is empty.
  */
-export function blankTags(text: string, contact: Contact) {
+export function blankTags(text: string, contact: Contact, options: MergeOptions = {}) {
   const blanks: string[] = [];
   for (const match of text.matchAll(/\{([^{}]+)\}/g)) {
     const expression = match[1];
     if (expression.includes('|')) continue;
-    const rendered = renderMerge(match[0], contact);
+    const rendered = renderMerge(match[0], contact, { hookColumn: options.hookColumn });
     if (!rendered.trim() && !blanks.includes(expression.trim())) blanks.push(expression.trim());
   }
   return blanks;
 }
 
 /** Everything that would make this row read wrong: unknown tags and blank cells without a fallback. */
-export function missingTags(text: string, contact: Contact) {
-  return [...new Set([...unresolvedTags(text, contact), ...blankTags(text, contact)])];
+export function missingTags(text: string, contact: Contact, options: MergeOptions = {}) {
+  return [...new Set([...unresolvedTags(text, contact, options), ...blankTags(text, contact, options)])];
 }
 
 export function safeFilename(pattern: string, contact: Contact, extension: string) {
-  const base = renderMerge(pattern, contact)
+  const base = stripHookMarks(renderMerge(pattern, contact))
     .normalize('NFKD')
     .replace(/[^\w.-]+/g, '_')
     .replace(/_+/g, '_')

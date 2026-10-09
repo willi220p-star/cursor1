@@ -114,7 +114,7 @@ async function render(config: StudioConfig, contact: Contact) {
     context.fillStyle = config.inkColor;
     context.font = `${config.fontSize}px "${config.fontFamily}", cursive`;
     context.textBaseline = 'top';
-    const copy = renderMerge(config.copy, contact);
+    const copy = renderMerge(config.copy, contact, { hookColumn: config.hookColumn });
     const copyLines = wrap(context, copy, width * .76);
     copyLines.forEach((line, index) => {
       const jitter = ((contact.row + index * 7) % 5) - 2;

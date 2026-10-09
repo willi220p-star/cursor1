@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { missingTags } from './merge';
+import { missingTags, type MergeOptions } from './merge';
 import type { Contact } from './types';
 
 export type RowIssue = { row: number; problems: string[] };
@@ -20,7 +20,7 @@ function readable(tag: string) {
  * merge tags with no value and no fallback, image columns that are not links, and bad emails.
  * Returns plain sentences per row; it never blocks an import.
  */
-export function checkRows(rows: Contact[], copy: string): RowIssue[] {
+export function checkRows(rows: Contact[], copy: string, options: MergeOptions = {}): RowIssue[] {
   const rowSchema = z.record(z.unknown()).superRefine((contact, ctx) => {
     for (const [key, raw] of Object.entries(contact)) {
       const value = typeof raw === 'string' ? raw.trim() : '';
@@ -32,7 +32,7 @@ export function checkRows(rows: Contact[], copy: string): RowIssue[] {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'email address looks wrong' });
       }
     }
-    const missing = missingTags(copy, contact as Contact);
+    const missing = missingTags(copy, contact as Contact, options);
     for (const tag of missing) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `no ${readable(tag)}` });
     }

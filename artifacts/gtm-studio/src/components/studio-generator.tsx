@@ -92,6 +92,7 @@ import {
   uploadGeneratedAssets,
 } from '@/studio/cloud';
 import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
+import { HookControls } from '@/components/studio/hook-controls';
 import {
   contactsStorageKey,
   hydratePortraits,
@@ -364,14 +365,15 @@ export function StudioGenerator({
   const tagText = mode === 'memes' || mode === 'gif'
     ? config.layers.map((layer) => layer.text).join(' ')
     : `${config.copy}\n${config.message}\n${config.postscript ?? ''}\n${config.signature ?? ''}`;
-  const invalid = missingTags(tagText, contact);
+  const mergeOptions = { hookColumn: config.hookColumn };
+  const invalid = missingTags(tagText, contact, mergeOptions);
   // Every row whose note would read wrong: a tag with no column, or a blank cell with no fallback.
   const rowsReadingWrong = useMemo(
     () => contacts.flatMap((row, index) => {
-      const tags = missingTags(tagText, row);
+      const tags = missingTags(tagText, row, { hookColumn: config.hookColumn });
       return tags.length ? [{ index, row: row.row, tags }] : [];
     }),
-    [contacts, tagText],
+    [contacts, tagText, config.hookColumn],
   );
   const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
   useEffect(() => {
@@ -382,7 +384,7 @@ export function StudioGenerator({
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [config, contact, mode]);
-  const noteWords = countWords(`${renderMerge(config.copy, contact)} ${config.postscript ? renderMerge(config.postscript, contact) : ''}`);
+  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
   const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit);
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
@@ -2032,7 +2034,19 @@ export function StudioGenerator({
               <span>{lengthAdvice.text}</span>
             </p>
           )}
-          <div className="rounded-md bg-surface-2 p-3 text-sm leading-relaxed whitespace-pre-wrap">{renderMerge(config.copy, contact)}</div>
+          <div className="rounded-md bg-surface-2 p-3 text-sm leading-relaxed whitespace-pre-wrap">{renderMerge(config.copy, contact, mergeOptions)}</div>
+          {handwritingMode && (
+            <HookControls
+              columns={columns}
+              contact={contact}
+              copy={config.copy}
+              hookColumn={config.hookColumn}
+              hookMark={config.hookMark}
+              onColumn={(column) => updateConfig('hookColumn', column)}
+              onMark={(mark) => updateConfig('hookMark', mark)}
+              onInsert={() => updateConfig('copy', `${config.copy.trimEnd()} {hook}`)}
+            />
+          )}
           <FieldRow id="signature" label={avatarMode ? 'Typed signature' : 'Signature'}>
             <input id="signature" className="field" value={config.signature} onChange={(event) => updateConfig('signature', event.target.value)} />
           </FieldRow>

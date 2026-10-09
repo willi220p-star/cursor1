@@ -154,6 +154,8 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
     avatarImage: mode === 'avatar' ? value.avatarImage : undefined,
     avatarUrl: mode === 'avatar' ? value.avatarUrl : undefined,
     message: value.message ?? defaults.message,
+    // Unset means underline; anything unknown from an old save is dropped.
+    hookMark: (['underline', 'circle', 'none'] as const).find((mark) => mark === value.hookMark),
     showMessage: value.showMessage ?? defaults.showMessage,
     layers: (value.layers?.length ? value.layers : defaults.layers).map((layer) => ({
       ...layer,
