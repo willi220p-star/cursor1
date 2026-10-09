@@ -54,6 +54,7 @@ import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
 import { batchConcurrency, runQueue } from '@/studio/batch-queue';
 import { loadArtefactFonts } from '@/studio/fonts';
+import { CAPTION_LINE_HEIGHT, CAPTION_STROKE, CAPTION_STROKE_COLOR, canvasCaptionMeasure, captionFont, fitLayerCaption } from '@/studio/caption-fit';
 import { missingTags, safeFilename, renderMerge } from '@/studio/merge';
 import { countWords, noteAdvice, type NoteFitInfo } from '@/studio/note-advice';
 import {
@@ -92,6 +93,8 @@ import {
   uploadGeneratedAssets,
 } from '@/studio/cloud';
 import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
+import { OpenerLibrary } from '@/components/studio/opener-library';
+import { HookControls } from '@/components/studio/hook-controls';
 import {
   contactsStorageKey,
   hydratePortraits,
@@ -169,6 +172,7 @@ import type { FieldAssignment } from '@/studio/field-map';
 import { SampleStrip } from '@/components/studio/sample-strip';
 import { SignaturePad } from '@/components/studio/signature-pad';
 import { ShortcutsDialog } from '@/components/studio/shortcuts-dialog';
+import { InboxPreviewSection } from '@/components/studio/inbox-preview';
 import { ColorField, DurablePortrait, FieldRow, FileButton, InfoTip, MoreSettings, Section, SliderField, contactMeta, contactName } from '@/components/studio/shared';
 
 function StyledLayerText({ text, highlight, color }: { text: string; highlight?: string; color?: string }) {
@@ -183,6 +187,72 @@ function StyledLayerText({ text, highlight, color }: { text: string; highlight?:
           ? <mark key={`${part}-${index}`} style={{ background: color || '#ffe566', color: 'inherit', padding: '0 .12em', borderRadius: 2 }}>{part}</mark>
           : <span key={`${part}-${index}`}>{part}</span>
       ))}
+    </>
+  );
+}
+
+let captionFontsLoaded: Promise<void> | null = null;
+
+/** Resolve once the caption face is ready to measure, so the live overlay wraps like the export. */
+function loadCaptionFonts() {
+  captionFontsLoaded ??= loadArtefactFonts()
+    .then(() => document.fonts.load(captionFont(40), 'Hg'))
+    .then(() => undefined, () => undefined);
+  return captionFontsLoaded;
+}
+
+/**
+ * Meme captions as DOM text while the stage animates. Uses the same fit as the renderer and the batch
+ * worker (measured with a canvas 2D context at the channel's native size), so lines and size match the export.
+ */
+function LiveCaptionLayers({ layers, contact, animation, width, height }: { layers: TextLayer[]; contact: Contact; animation?: string; width: number; height: number }) {
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadCaptionFonts().then(() => { if (live) setFontsReady(true); });
+    return () => { live = false; };
+  }, []);
+  const fits = useMemo(() => {
+    const context = document.createElement('canvas').getContext('2d');
+    if (!context) return [];
+    const measure = canvasCaptionMeasure(context);
+    return layers.map((layer) => fitLayerCaption(layer, renderMerge(layer.text, contact), width, height, measure));
+    // fontsReady re-measures once the caption face has loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers, contact, width, height, fontsReady]);
+  // Container units of the stage, so the overlay scales with it exactly like the canvas does.
+  const unit = (value: number) => `${(value / width) * 100}cqw`;
+  return (
+    <>
+      {layers.map((layer, index) => {
+        const fit = fits[index];
+        if (!fit) return null;
+        return (
+          <div
+            key={`live-${layer.id}`}
+            className={`meme-live-layer is-${animation} is-text-${layer.animation ?? 'still'}`}
+            style={{
+              left: `${layer.x * 100}%`,
+              top: `${layer.y * 100}%`,
+              width: `${layer.width * 100}%`,
+              height: `${layer.height * 100}%`,
+              fontSize: unit(fit.fontSize),
+              lineHeight: CAPTION_LINE_HEIGHT,
+              color: layer.color,
+              textAlign: layer.align,
+              WebkitTextStroke: layer.outline ? `${unit(Math.max(1.5, fit.fontSize * CAPTION_STROKE))} ${CAPTION_STROKE_COLOR}` : '0',
+              textShadow: layer.animation === 'glow' ? `0 0 18px ${layer.highlightColor || layer.color}` : 'none',
+              background: layer.boxFill,
+            }}
+          >
+            {fit.lines.map((line, lineIndex) => (
+              <span key={lineIndex} className="meme-live-line">
+                <StyledLayerText text={line} highlight={layer.highlight} color={layer.highlightColor} />
+              </span>
+            ))}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -364,14 +434,15 @@ export function StudioGenerator({
   const tagText = mode === 'memes' || mode === 'gif'
     ? config.layers.map((layer) => layer.text).join(' ')
     : `${config.copy}\n${config.message}\n${config.postscript ?? ''}\n${config.signature ?? ''}`;
-  const invalid = missingTags(tagText, contact);
+  const mergeOptions = { hookColumn: config.hookColumn };
+  const invalid = missingTags(tagText, contact, mergeOptions);
   // Every row whose note would read wrong: a tag with no column, or a blank cell with no fallback.
   const rowsReadingWrong = useMemo(
     () => contacts.flatMap((row, index) => {
-      const tags = missingTags(tagText, row);
+      const tags = missingTags(tagText, row, { hookColumn: config.hookColumn });
       return tags.length ? [{ index, row: row.row, tags }] : [];
     }),
-    [contacts, tagText],
+    [contacts, tagText, config.hookColumn],
   );
   const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
   useEffect(() => {
@@ -382,7 +453,7 @@ export function StudioGenerator({
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [config, contact, mode]);
-  const noteWords = countWords(`${renderMerge(config.copy, contact)} ${config.postscript ? renderMerge(config.postscript, contact) : ''}`);
+  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
   const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit);
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
@@ -2023,6 +2094,7 @@ export function StudioGenerator({
             }}
             onAnnounce={setAnnouncement}
           />
+          <OpenerLibrary contact={contact} onUseMessage={(body, title) => { updateConfig('copy', body); setAnnouncement(`Opener ${title} applied`); }} onUsePostscript={(text, title) => { updateConfig('postscript', text); setAnnouncement(`P.S. ${title} applied`); }} />
           <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{handwritingMode ? `${noteWords} words` : `${config.copy.length} chars · ${copyLines} lines`}</span></span>}>
             <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} aria-describedby={handwritingMode ? 'note-length' : undefined} />
           </FieldRow>
@@ -2032,7 +2104,19 @@ export function StudioGenerator({
               <span>{lengthAdvice.text}</span>
             </p>
           )}
-          <div className="rounded-md bg-surface-2 p-3 text-sm leading-relaxed whitespace-pre-wrap">{renderMerge(config.copy, contact)}</div>
+          <div className="rounded-md bg-surface-2 p-3 text-sm leading-relaxed whitespace-pre-wrap">{renderMerge(config.copy, contact, mergeOptions)}</div>
+          {handwritingMode && (
+            <HookControls
+              columns={columns}
+              contact={contact}
+              copy={config.copy}
+              hookColumn={config.hookColumn}
+              hookMark={config.hookMark}
+              onColumn={(column) => updateConfig('hookColumn', column)}
+              onMark={(mark) => updateConfig('hookMark', mark)}
+              onInsert={() => updateConfig('copy', `${config.copy.trimEnd()} {hook}`)}
+            />
+          )}
           <FieldRow id="signature" label={avatarMode ? 'Typed signature' : 'Signature'}>
             <input id="signature" className="field" value={config.signature} onChange={(event) => updateConfig('signature', event.target.value)} />
           </FieldRow>
@@ -2495,6 +2579,7 @@ export function StudioGenerator({
           </FieldRow>
         )}
       </Section>
+      <InboxPreviewSection config={config} contact={contact} mode={mode} noteFit={noteFit} words={noteWords} onConfigChange={updateConfig} />
       <Section title="Generate">
         {generating ? (
           <div className="flex flex-col gap-3" role="status" aria-live="polite">
@@ -2764,28 +2849,9 @@ export function StudioGenerator({
                 />
               )}
               {cutMode && config.effect === 'fire' && <div className="meme-fire-veil" />}
-              {cutMode && liveMotion && config.layers.map((layer) => (
-                <div
-                  key={`live-${layer.id}`}
-                  className={`meme-live-layer is-${config.animation} is-text-${layer.animation ?? 'still'}`}
-                  style={{
-                    left: `${layer.x * 100}%`,
-                    top: `${layer.y * 100}%`,
-                    width: `${layer.width * 100}%`,
-                    height: `${layer.height * 100}%`,
-                    fontSize: `clamp(18px, ${layer.fontSize * 0.42}px, 64px)`,
-                    color: layer.color,
-                    textAlign: layer.align,
-                    WebkitTextStroke: layer.outline ? '2.4px #111' : '0',
-                    textShadow: layer.animation === 'glow'
-                      ? `0 0 18px ${layer.highlightColor || layer.color}`
-                      : layer.outline ? '-2px -2px 0 #111, 2px -2px 0 #111, -2px 2px 0 #111, 2px 2px 0 #111, 0 3px 0 #111' : 'none',
-                    background: layer.boxFill,
-                  }}
-                >
-                  <StyledLayerText text={renderMerge(layer.text, contact)} highlight={layer.highlight} color={layer.highlightColor} />
-                </div>
-              ))}
+              {cutMode && liveMotion && (
+                <LiveCaptionLayers layers={config.layers} contact={contact} animation={config.animation} width={canvasDims.width} height={canvasDims.height} />
+              )}
               {cropMode === 'off' && paperMode && (
                 <div
                   className={`canvas-zone ${activeCanvasZone === 'note' ? 'is-active' : ''}`}

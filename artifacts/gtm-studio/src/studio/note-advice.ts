@@ -5,6 +5,8 @@ export type NoteFitInfo = {
   needed: number;
   available: number;
   chosen: { needed: number; available: number };
+  /** Drawn size per unit of the size setting for the handwriting font in use. */
+  fontScale?: number;
 };
 
 export type NoteAdvice = { tone: 'good' | 'warn' | 'info'; text: string };

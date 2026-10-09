@@ -1,3 +1,4 @@
+import { memeSamples } from './meme-samples';
 import { modeLabel } from './renderer';
 import {
   avatarInNoteLayout,
@@ -57,6 +58,16 @@ export const defaultLayers: TextLayer[] = [
   },
 ];
 
+/**
+ * New meme campaigns start on a real photo, like a meme people actually send. "Stressed laptop" reads
+ * instantly as outbound pain for any B2B buyer, is square for LinkedIn and has room for a caption top and bottom.
+ */
+export const defaultMemeSampleId = 'stressed-laptop';
+
+function defaultMemeSample() {
+  return memeSamples.find((sample) => sample.id === defaultMemeSampleId) ?? memeSamples[0];
+}
+
 export function defaultConfig(mode: StudioMode): StudioConfig {
   const paper = mode === 'handwritten' || mode === 'avatar' || mode === 'handgif';
   const handwriting = mode === 'handwritten' || mode === 'handgif';
@@ -64,10 +75,12 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
   const channel = handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn';
   const layout = mode === 'avatar' ? avatarInNoteLayout(channel, 0.24, finishPaperZone('desk')) : null;
   const paperKind: PaperKind = mode === 'avatar' ? 'white-paper' : 'notebook';
+  const memeSample = mode === 'memes' ? defaultMemeSample() : undefined;
   return {
     mode,
     campaignName: `${modeLabel(mode)} campaign`,
-    template: templateOptions[mode][0],
+    template: memeSample ? 'Custom image' : templateOptions[mode][0],
+    customImage: memeSample?.src,
     copy:
       mode === 'memes' || mode === 'gif'
         ? 'HEY {first_name|THERE}'
@@ -121,9 +134,10 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     textZone: layout?.text ?? { x: 0.18, y: 0.18, width: 0.64, height: 0.58 },
     avatarColumn: mode === 'avatar' ? 'avatar' : undefined,
     messageColumn: mode === 'avatar' ? 'msg' : undefined,
-    animation: mode === 'memes' ? 'bounce' : mode === 'gif' ? 'fade' : 'still',
+    // A classic meme is a still image; pick a motion in the Look tab to make it a GIF.
+    animation: mode === 'memes' ? 'still' : mode === 'gif' ? 'fade' : 'still',
     textMotion: mode === 'avatar' ? 'type' : 'still',
-    layers: defaultLayers,
+    layers: memeSample ? memeSample.layers.map((layer) => ({ ...layer })) : defaultLayers,
   };
 }
 
@@ -143,6 +157,8 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
     ...value,
     mode,
     fontFamily,
+    // A saved look without a photo stays without one: the default meme photo is for new campaigns only.
+    customImage: value.customImage,
     websiteZone: value.websiteZone ?? defaults.websiteZone,
     noteZone: inNote ? savedNote : (layout?.note ?? defaults.noteZone),
     avatarZone: inNote ? savedAvatar : (layout?.avatar ?? defaults.avatarZone),
@@ -154,6 +170,8 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
     avatarImage: mode === 'avatar' ? value.avatarImage : undefined,
     avatarUrl: mode === 'avatar' ? value.avatarUrl : undefined,
     message: value.message ?? defaults.message,
+    // Unset means underline; anything unknown from an old save is dropped.
+    hookMark: (['underline', 'circle', 'none'] as const).find((mark) => mark === value.hookMark),
     showMessage: value.showMessage ?? defaults.showMessage,
     layers: (value.layers?.length ? value.layers : defaults.layers).map((layer) => ({
       ...layer,

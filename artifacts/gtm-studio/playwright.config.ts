@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const port = 43190;
+const port = Number(process.env.E2E_PORT ?? 43190);
 
 // Browser checks run against the dev server with a fake Supabase project, so they never touch real data.
 export default defineConfig({

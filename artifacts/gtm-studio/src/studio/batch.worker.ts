@@ -1,20 +1,36 @@
 /// <reference lib="webworker" />
 import { publicAssetUrl } from '@/lib/public-url';
+import { drawCaptionLayer } from './caption-draw';
+import { canvasCaptionMeasure, captionFont } from './caption-fit';
 import { renderMerge } from './merge';
-import type { Contact, StudioConfig, TextLayer } from './types';
-import { coverCropRect } from './types';
+import type { Contact, StudioConfig } from './types';
+import { canvasSizes, coverCropRect } from './types';
 
 type RenderMessage = { id: string; config: StudioConfig; contact: Contact };
 
-const sizes = {
-  Card: { width: 1500, height: 1000 },
-  A4: { width: 1240, height: 1754 },
-  LinkedIn: { width: 1080, height: 1080 },
-  Email: { width: 1200, height: 628 },
-  Portrait: { width: 1080, height: 1350 },
-  Widescreen: { width: 1600, height: 900 },
-  Classic: { width: 800, height: 600 },
-} as const;
+const sizes = canvasSizes;
+
+/** The page loads the caption face from Google Fonts; a worker has its own font set, so load the same files here. */
+const CAPTION_FONT_CSS = 'https://fonts.googleapis.com/css2?family=Anton&display=swap';
+let captionFontReady: Promise<void> | null = null;
+
+function loadCaptionFont() {
+  captionFontReady ??= (async () => {
+    try {
+      const css = await (await fetch(CAPTION_FONT_CSS)).text();
+      for (const block of css.match(/@font-face\s*{[^}]*}/g) ?? []) {
+        const src = /src:\s*([^;]+);/.exec(block)?.[1];
+        if (!src) continue;
+        const range = /unicode-range:\s*([^;]+);/.exec(block)?.[1];
+        self.fonts.add(new FontFace('Anton', src, range ? { unicodeRange: range } : {}));
+      }
+      await self.fonts.load(captionFont(40), 'Hg');
+    } catch {
+      // Offline: captions fall back to Impact or the system sans.
+    }
+  })();
+  return captionFontReady;
+}
 
 function wrap(context: OffscreenCanvasRenderingContext2D, text: string, width: number) {
   const lines: string[] = [];
@@ -71,26 +87,6 @@ function paper(context: OffscreenCanvasRenderingContext2D, config: StudioConfig,
   }
 }
 
-function drawLayer(context: OffscreenCanvasRenderingContext2D, layer: TextLayer, contact: Contact, width: number, height: number) {
-  const size = Math.max(18, layer.fontSize * (width / 1080));
-  const x = layer.x * width;
-  const y = layer.y * height;
-  const maxWidth = layer.width * width;
-  context.font = `900 ${size}px Impact, sans-serif`;
-  context.textAlign = layer.align;
-  context.textBaseline = 'top';
-  context.fillStyle = layer.color;
-  context.strokeStyle = '#111';
-  context.lineJoin = 'round';
-  context.lineWidth = Math.max(3, size * .1);
-  const anchor = layer.align === 'center' ? x + maxWidth / 2 : layer.align === 'right' ? x + maxWidth : x;
-  wrap(context, renderMerge(layer.text, contact), maxWidth).forEach((line, index) => {
-    const lineY = y + index * size * 1.03;
-    if (layer.outline) context.strokeText(line, anchor, lineY, maxWidth);
-    context.fillText(line, anchor, lineY, maxWidth);
-  });
-}
-
 async function render(config: StudioConfig, contact: Contact) {
   const { width, height } = sizes[config.channel] ?? sizes.LinkedIn;
   const canvas = new OffscreenCanvas(width, height);
@@ -114,7 +110,7 @@ async function render(config: StudioConfig, contact: Contact) {
     context.fillStyle = config.inkColor;
     context.font = `${config.fontSize}px "${config.fontFamily}", cursive`;
     context.textBaseline = 'top';
-    const copy = renderMerge(config.copy, contact);
+    const copy = renderMerge(config.copy, contact, { hookColumn: config.hookColumn });
     const copyLines = wrap(context, copy, width * .76);
     copyLines.forEach((line, index) => {
       const jitter = ((contact.row + index * 7) % 5) - 2;
@@ -154,15 +150,39 @@ async function render(config: StudioConfig, contact: Contact) {
     const gradient = context.createLinearGradient(0, 0, width, height);
     gradient.addColorStop(0, start); gradient.addColorStop(1, end);
     context.fillStyle = gradient; context.fillRect(0, 0, width, height);
+    // Same still frame as renderStudioCanvas at phase 1: photo, edge shade for caption contrast, fire veil.
     const background = await imageBitmap(config.customImage);
-    if (background) { cover(context, background, 0, 0, width, height, config.imageCrop); background.close(); }
+    if (background) {
+      cover(context, background, 0, 0, width, height, config.imageCrop); background.close();
+      const overlay = context.createLinearGradient(0, 0, 0, height);
+      overlay.addColorStop(0, 'rgba(8,6,4,.42)');
+      overlay.addColorStop(0.24, 'rgba(8,6,4,0)');
+      overlay.addColorStop(0.74, 'rgba(8,6,4,0)');
+      overlay.addColorStop(1, 'rgba(8,6,4,.46)');
+      context.fillStyle = overlay;
+      context.fillRect(0, 0, width, height);
+      if (config.effect === 'fire') {
+        const flame = context.createLinearGradient(0, height, 0, height * 0.28);
+        flame.addColorStop(0, 'rgba(255,72,0,0.32)');
+        flame.addColorStop(0.45, 'rgba(255,160,20,0.144)');
+        flame.addColorStop(1, 'rgba(255,200,40,0)');
+        context.fillStyle = flame;
+        context.fillRect(0, 0, width, height);
+      }
+    } else {
+      context.globalAlpha = 0.14;
+      for (let x = -height; x < width; x += 90) context.fillRect(x, 0, 34, height);
+      context.globalAlpha = 1;
+    }
     const website = await imageBitmap(config.websiteColumn ? String(contact[config.websiteColumn] ?? '') : '');
     if (website) {
       const zone = config.websiteZone;
       context.save(); context.beginPath(); context.roundRect(zone.x * width, zone.y * height, zone.width * width, zone.height * height, 24); context.clip();
-      cover(context, website, zone.x * width, zone.y * height, zone.width * width, zone.height * height); context.restore(); website.close();
+      cover(context, website, zone.x * width, zone.y * height, zone.width * width, zone.height * height, config.imageCrop); context.restore(); website.close();
     }
-    config.layers.forEach((layer) => drawLayer(context, layer, contact, width, height));
+    await loadCaptionFont();
+    const measure = canvasCaptionMeasure(new OffscreenCanvas(1, 1).getContext('2d') ?? context);
+    config.layers.forEach((layer) => drawCaptionLayer(context, layer, contact, width, height, width, height, measure));
   }
   return canvas.convertToBlob({ type: 'image/png' });
 }
