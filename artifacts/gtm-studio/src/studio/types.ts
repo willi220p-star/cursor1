@@ -464,6 +464,9 @@ export type StudioConfig = {
   autoFit?: boolean;
   /** Still exports: small JPG for email, or full-quality PNG. Notes default to JPG. */
   imageFormat?: StillFormat;
+  /** Inbox preview: email subject and first body line shown around the image. Merge tags allowed. */
+  emailSubject?: string;
+  emailPreview?: string;
   writingHand: WritingHandId;
   writingSpeed: WritingSpeed;
   signatureImage?: string;

@@ -171,6 +171,7 @@ import type { FieldAssignment } from '@/studio/field-map';
 import { SampleStrip } from '@/components/studio/sample-strip';
 import { SignaturePad } from '@/components/studio/signature-pad';
 import { ShortcutsDialog } from '@/components/studio/shortcuts-dialog';
+import { InboxPreviewSection } from '@/components/studio/inbox-preview';
 import { ColorField, DurablePortrait, FieldRow, FileButton, InfoTip, MoreSettings, Section, SliderField, contactMeta, contactName } from '@/components/studio/shared';
 
 function StyledLayerText({ text, highlight, color }: { text: string; highlight?: string; color?: string }) {
@@ -2511,6 +2512,7 @@ export function StudioGenerator({
           </FieldRow>
         )}
       </Section>
+      <InboxPreviewSection config={config} contact={contact} mode={mode} noteFit={noteFit} words={noteWords} onConfigChange={updateConfig} />
       <Section title="Generate">
         {generating ? (
           <div className="flex flex-col gap-3" role="status" aria-live="polite">

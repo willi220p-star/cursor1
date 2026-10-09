@@ -1561,7 +1561,7 @@ export async function measureNoteFit(config: StudioConfig, contact: Contact) {
   if (!context) return null;
   const paper = { paperX: target.width * zone.x, paperY: target.height * zone.y, paperW: target.width * zone.width, paperH: target.height * zone.height };
   const fit = fitHandwritingGrid(context, config, contact, fontFamily, paper, 1, Boolean(config.signatureImage));
-  return { fontSize: fit.fontSize, needed: fit.needed, available: fit.available, chosen: fit.chosen, firstBaseline: fit.grid.firstBaseline, step: fit.grid.step };
+  return { fontSize: fit.fontSize, needed: fit.needed, available: fit.available, chosen: fit.chosen, fontScale: handwritingScale(fontFamily), firstBaseline: fit.grid.firstBaseline, step: fit.grid.step };
 }
 
 /** A ballpoint lying on the desk, resting across the card's lower right corner. */
