@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
 import {
@@ -13,12 +13,14 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
 import { LoginPage } from '@/pages/login';
 import { DeskPage } from '@/pages/desk';
-import { SettingsPage } from '@/pages/settings';
 import { Shell } from '@/app/shell';
-import { StudioGenerator } from '@/components/studio-generator';
-import { CarouselGeneratorPage } from '@/carousel/page';
 import { useTheme } from '@/lib/theme';
 import { getCurrentSession, onAuthChange } from '@/studio/auth';
+
+// The studios, carousel and settings load on first visit so the Desk and sign-in paint fast.
+const StudioGenerator = lazy(() => import('@/components/studio-generator').then((m) => ({ default: m.StudioGenerator })));
+const CarouselGeneratorPage = lazy(() => import('@/carousel/page').then((m) => ({ default: m.CarouselGeneratorPage })));
+const SettingsPage = lazy(() => import('@/pages/settings').then((m) => ({ default: m.SettingsPage })));
 
 const queryClient = new QueryClient();
 
@@ -29,6 +31,15 @@ function BootScreen() {
         <p className="brand-lockup justify-center"><span className="brand-mark">DGK</span><span className="brand-name">Outbound Studio</span></p>
         <p className="display mt-4 text-2xl font-semibold">Checking access…</p>
       </div>
+    </div>
+  );
+}
+
+/** Shown in the page area while a studio's code loads; the shell and navigation stay put. */
+function PageFallback() {
+  return (
+    <div className="grid min-h-[60dvh] place-items-center" role="status" aria-live="polite">
+      <p className="text-sm text-muted-foreground">Opening…</p>
     </div>
   );
 }
@@ -55,17 +66,19 @@ function Router() {
       <Route path="/login"><Redirect to="/" replace /></Route>
       <Route>
         <Shell user={user}>
-          <Switch>
-            <Route path="/"><DeskPage userId={userId} email={email} /></Route>
-            <Route path="/handwritten"><StudioGenerator key="handwritten" mode="handwritten" userId={userId} /></Route>
-            <Route path="/avatar"><StudioGenerator key="avatar" mode="avatar" userId={userId} /></Route>
-            <Route path="/memes"><StudioGenerator key="memes" mode="memes" userId={userId} /></Route>
-            <Route path="/gif"><StudioGenerator key="gif" mode="gif" userId={userId} /></Route>
-            <Route path="/handgif"><StudioGenerator key="handgif" mode="handgif" userId={userId} /></Route>
-            <Route path="/carousel"><CarouselGeneratorPage userId={userId} /></Route>
-            <Route path="/settings"><SettingsPage userId={userId} email={email} /></Route>
-            <Route><NotFound /></Route>
-          </Switch>
+          <Suspense fallback={<PageFallback />}>
+            <Switch>
+              <Route path="/"><DeskPage userId={userId} email={email} /></Route>
+              <Route path="/handwritten"><StudioGenerator key="handwritten" mode="handwritten" userId={userId} /></Route>
+              <Route path="/avatar"><StudioGenerator key="avatar" mode="avatar" userId={userId} /></Route>
+              <Route path="/memes"><StudioGenerator key="memes" mode="memes" userId={userId} /></Route>
+              <Route path="/gif"><StudioGenerator key="gif" mode="gif" userId={userId} /></Route>
+              <Route path="/handgif"><StudioGenerator key="handgif" mode="handgif" userId={userId} /></Route>
+              <Route path="/carousel"><CarouselGeneratorPage userId={userId} /></Route>
+              <Route path="/settings"><SettingsPage userId={userId} email={email} /></Route>
+              <Route><NotFound /></Route>
+            </Switch>
+          </Suspense>
         </Shell>
       </Route>
     </Switch>
