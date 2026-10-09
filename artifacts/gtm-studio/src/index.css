@@ -1142,3 +1142,11 @@ body > div:last-child > span + img { display: inline !important; }
   .stage-skeleton::after { animation: none; }
   .btn[data-loading='true']::after { animation: none; border-right-color: currentColor; opacity: .5; }
 }
+
+/* Phone tweaks for the redesigned desk -------------------------------------------------------- */
+@media (max-width: 639px) {
+  .desk-scene { min-height: 380px; padding: 24px; }
+  .desk-paper { width: min(72%, 240px); padding: 22px 18px; font-size: 16px; }
+  .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .segmented button { flex: none; padding: 0 12px; }
+}
