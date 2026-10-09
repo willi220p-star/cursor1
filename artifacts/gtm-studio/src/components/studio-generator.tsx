@@ -92,6 +92,7 @@ import {
   uploadGeneratedAssets,
 } from '@/studio/cloud';
 import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
+import { OpenerLibrary } from '@/components/studio/opener-library';
 import {
   contactsStorageKey,
   hydratePortraits,
@@ -2023,6 +2024,7 @@ export function StudioGenerator({
             }}
             onAnnounce={setAnnouncement}
           />
+          <OpenerLibrary contact={contact} onUseMessage={(body, title) => { updateConfig('copy', body); setAnnouncement(`Opener ${title} applied`); }} onUsePostscript={(text, title) => { updateConfig('postscript', text); setAnnouncement(`P.S. ${title} applied`); }} />
           <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{handwritingMode ? `${noteWords} words` : `${config.copy.length} chars · ${copyLines} lines`}</span></span>}>
             <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} aria-describedby={handwritingMode ? 'note-length' : undefined} />
           </FieldRow>
