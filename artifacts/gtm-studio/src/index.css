@@ -1150,3 +1150,11 @@ body > div:last-child > span + img { display: inline !important; }
   .segmented { max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .segmented button { flex: none; padding: 0 12px; }
 }
+
+/* Per-row batch status ---------------------------------------------------------------------- */
+.row-dot { width: 9px; height: 9px; flex: none; margin-left: auto; border-radius: 999px; background: var(--input); }
+.row-dot.is-working { background: var(--primary); animation: row-pulse 1s ease-in-out infinite; }
+.row-dot.is-done { background: var(--success); }
+.row-dot.is-failed { background: var(--destructive); }
+@keyframes row-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .row-dot.is-working { animation: none; } }

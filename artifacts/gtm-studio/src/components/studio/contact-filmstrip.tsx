@@ -6,16 +6,23 @@ import { DurablePortrait, contactMeta, contactName } from './shared';
 
 const VISIBLE = 16;
 
+type RowState = 'waiting' | 'working' | 'done' | 'failed';
+const stateLabel: Record<RowState, string> = { waiting: 'Waiting', working: 'Being made', done: 'Ready', failed: 'Failed' };
+
 export function ContactFilmstrip({
   contacts,
   selectedRow,
   onSelect,
   portraitFor,
   onOpenList,
+  rowStatus = {},
+  rowErrors = {},
 }: {
   contacts: Contact[];
   selectedRow: number;
   onSelect: (index: number) => void;
+  rowStatus?: Record<number, RowState>;
+  rowErrors?: Record<number, string>;
   portraitFor: (row: Contact) => string;
   onOpenList: () => void;
 }) {
@@ -35,11 +42,14 @@ export function ContactFilmstrip({
         >
           {contacts.slice(0, VISIBLE).map((row, index) => {
             const portrait = portraitFor(row);
+            const state = rowStatus[row.row];
+            const problem = state === 'failed' ? rowErrors[row.row] : undefined;
             return (
               <ToggleGroupItem
                 key={`${row.row}-${index}`}
                 value={String(index)}
-                aria-label={`Row ${index + 1}: ${contactName(row)}, ${contactMeta(row)}`}
+                title={problem ? `Failed: ${problem}` : undefined}
+                aria-label={`Row ${index + 1}: ${contactName(row)}, ${contactMeta(row)}${state ? `. ${stateLabel[state]}${problem ? `: ${problem}` : ''}` : ''}`}
                 onFocus={() => {
                   if (index !== selectedRow) onSelect(index);
                 }}
@@ -50,6 +60,7 @@ export function ContactFilmstrip({
                   <strong>{contactName(row)}</strong>
                   <small>{contactMeta(row)}</small>
                 </span>
+                {state && <span className={`row-dot is-${state}`} aria-hidden />}
               </ToggleGroupItem>
             );
           })}

@@ -50,6 +50,7 @@ import { contactColumns, prepareImportedContacts } from '@/studio/importers';
 import { consumeSampleListRequest, loadSampleList, recordExport } from '@/studio/activity';
 import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
+import { batchConcurrency, runQueue } from '@/studio/batch-queue';
 import { loadArtefactFonts } from '@/studio/fonts';
 import { unresolvedTags, safeFilename, renderMerge } from '@/studio/merge';
 import {
@@ -195,6 +196,8 @@ function fileAsDataUrl(file: File) {
 }
 
 /** Turn a raw failure into what happened / why / how to fix. */
+export type RowState = 'waiting' | 'working' | 'done' | 'failed';
+
 function explainError(message: string) {
   const lower = message.toLowerCase();
   if (lower.includes('cloud sync failed')) return `${message} The work is safe in this browser — check your connection or Supabase policies, then press Save again.`;
@@ -308,6 +311,7 @@ export function StudioGenerator({
   const [progressDone, setProgressDone] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
+  const [laneCount, setLaneCount] = useState(1);
   const [generating, setGenerating] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [slowPreview, setSlowPreview] = useState(false);
@@ -332,7 +336,9 @@ export function StudioGenerator({
   const previewCanvas = useRef<HTMLCanvasElement>(null);
   const assetsRef = useRef<GeneratedAsset[]>([]);
   const batchControllerRef = useRef<AbortController | null>(null);
-  const staticWorkerRef = useRef<ReturnType<typeof createBatchRenderer> | null>(null);
+  // One batch worker per lane, so still memes and GIF frames render in parallel.
+  const staticWorkersRef = useRef<Array<ReturnType<typeof createBatchRenderer>>>([]);
+  const [rowStatus, setRowStatus] = useState<Record<number, RowState>>({});
   const batchStartRef = useRef(0);
   const dragRef = useRef<{ kind: ZoneKind | 'crop-image' | 'crop-avatar'; resize: boolean; startX: number; startY: number; zone: { x: number; y: number; width: number; height: number }; companions?: { avatar: { x: number; y: number; width: number; height: number }; text: { x: number; y: number; width: number; height: number } } } | null>(null);
   const hydrateGen = useRef(0);
@@ -463,7 +469,7 @@ export function StudioGenerator({
   }, [assets]);
   useEffect(() => () => {
     batchControllerRef.current?.abort();
-    staticWorkerRef.current?.terminate();
+    terminateStaticWorkers();
     assetsRef.current.forEach((asset) => asset.url && asset.url.startsWith('blob:') && URL.revokeObjectURL(asset.url));
   }, []);
 
@@ -1319,13 +1325,24 @@ export function StudioGenerator({
     setDeskTab('look');
   };
 
-  const renderOne = async (current: Contact, signal?: AbortSignal) => {
+  function terminateStaticWorkers() {
+    staticWorkersRef.current.forEach((worker) => worker.terminate());
+    staticWorkersRef.current = [];
+  }
+
+  const staticWorker = (lane: number) => {
+    const pool = staticWorkersRef.current;
+    if (!pool[lane]) pool[lane] = createBatchRenderer();
+    return pool[lane];
+  };
+
+  const renderOne = async (current: Contact, signal?: AbortSignal, lane = 0) => {
     const extension = exportIsAnimated(mode, config) ? 'gif' : 'png';
     const blob = exportIsAnimated(mode, config)
       ? await renderGifAsset(config, current, signal)
       : mode === 'handwritten' || mode === 'avatar'
         ? await renderStaticAsset(config, current)
-        : await (staticWorkerRef.current ?? (staticWorkerRef.current = createBatchRenderer())).render(config, current);
+        : await staticWorker(lane).render(config, current);
     return {
       id: crypto.randomUUID(),
       row: current.row,
@@ -1338,60 +1355,70 @@ export function StudioGenerator({
     } as GeneratedAsset;
   };
 
-  const renderBatch = async (startIndex = 0, keep: GeneratedAsset[] = []) => {
+  const renderBatch = async (keep: GeneratedAsset[] = []) => {
     setError('');
     setGenerating(true);
     cancelRef.current = false;
     const controller = new AbortController();
     batchControllerRef.current = controller;
     if (!keep.length) assets.forEach((asset) => URL.revokeObjectURL(asset.url));
-    const generated: GeneratedAsset[] = [...keep];
     const batchContacts = contacts.slice(0, 400);
+    const keptRows = new Set(keep.map((asset) => asset.row));
+    const todo = batchContacts.filter((contact) => !keptRows.has(contact.row));
+    const animated = exportIsAnimated(mode, config);
+    const lanes = batchConcurrency(animated ? 'gif' : mode === 'handwritten' || mode === 'avatar' ? 'main' : 'worker');
     setProgressTotal(batchContacts.length);
-    setProgressDone(generated.length);
-    setProgress(Math.round((generated.length / Math.max(1, batchContacts.length)) * 100));
+    setProgressDone(keep.length);
+    setProgress(Math.round((keep.length / Math.max(1, batchContacts.length)) * 100));
     setEtaSeconds(null);
+    setLaneCount(lanes);
+    setRowStatus(Object.fromEntries(batchContacts.map((contact) => [contact.row, keptRows.has(contact.row) ? 'done' : 'waiting'])) as Record<number, RowState>);
     batchStartRef.current = performance.now();
-    const alreadyDone = generated.length;
-    if (mode !== 'handwritten' && mode !== 'avatar' && !exportIsAnimated(mode, config)) {
-      staticWorkerRef.current = createBatchRenderer();
-    }
-    for (let index = startIndex; index < batchContacts.length; index++) {
-      if (cancelRef.current) break;
-      const current = batchContacts[index];
+    let done = keep.length;
+    const setRow = (row: number, state: RowState) => setRowStatus((current) => ({ ...current, [row]: state }));
+    const results = await runQueue(todo, lanes, async (current, lane) => {
+      setRow(current.row, 'working');
+      let asset: GeneratedAsset | undefined;
       try {
-        generated.push(await renderOne(current, controller.signal));
+        asset = await renderOne(current, controller.signal, lane);
       } catch (reason) {
-        if (controller.signal.aborted) break;
-        generated.push({
+        if (controller.signal.aborted || cancelRef.current) {
+          setRow(current.row, 'waiting');
+          return undefined;
+        }
+        asset = {
           id: crypto.randomUUID(),
           row: current.row,
-          filename: safeFilename(config.filename, current, exportIsAnimated(mode, config) ? 'gif' : 'png'),
+          filename: safeFilename(config.filename, current, animated ? 'gif' : 'png'),
           blob: new Blob(),
           url: '',
           bytes: 0,
           selected: false,
           status: 'failed',
           error: reason instanceof Error ? reason.message : 'Generation failed.',
-        });
+        };
       }
-      const done = index + 1;
+      setRow(current.row, asset.status === 'failed' ? 'failed' : 'done');
+      done += 1;
       setProgressDone(done);
       setProgress(Math.round((done / batchContacts.length) * 100));
       const elapsed = (performance.now() - batchStartRef.current) / 1000;
-      const finishedThisRun = done - alreadyDone;
+      const finishedThisRun = done - keep.length;
       if (finishedThisRun > 0) setEtaSeconds(Math.max(0, Math.round((elapsed / finishedThisRun) * (batchContacts.length - done))));
-    }
+      return asset;
+    }, { shouldStop: () => cancelRef.current });
+    const fresh = results.filter((asset): asset is GeneratedAsset => Boolean(asset));
+    // Keep the list in row order, whichever lane finished first.
+    const order = new Map(batchContacts.map((contact, index) => [contact.row, index]));
+    const generated = [...keep, ...fresh].sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0));
     setAssets(generated);
-    staticWorkerRef.current?.terminate();
-    staticWorkerRef.current = null;
+    terminateStaticWorkers();
     batchControllerRef.current = null;
     if (cancelRef.current) {
-      const resumeFrom = generated.length;
-      toast(`Cancelled with ${generated.length} completed assets kept`, {
+      toast(`Stopped with ${generated.length} finished ${generated.length === 1 ? 'row' : 'rows'} kept`, {
         duration: 8000,
-        action: resumeFrom < batchContacts.length
-          ? { label: 'Resume', onClick: () => { void renderBatch(resumeFrom, generated); } }
+        action: generated.length < batchContacts.length
+          ? { label: 'Resume', onClick: () => { void renderBatch(generated); } }
           : undefined,
       });
     } else {
@@ -1464,7 +1491,7 @@ export function StudioGenerator({
     if (generating) {
       cancelRef.current = true;
       batchControllerRef.current?.abort();
-      staticWorkerRef.current?.terminate();
+      terminateStaticWorkers();
       return;
     }
     await renderBatch();
@@ -2549,7 +2576,7 @@ export function StudioGenerator({
         <div className="batch-progress" role="status" aria-live="polite">
           <strong>Making {Math.min(progressDone + 1, progressTotal)} of {progressTotal}</strong>
           <Progress value={progress} aria-label="Batch progress" className="h-2 flex-1 bg-fill [&>div]:bg-studio" />
-          <span className="text-sm text-muted-foreground tabular">{etaSeconds !== null ? `About ${etaSeconds} seconds left` : `${progress}%`}</span>
+          <span className="text-sm text-muted-foreground tabular">{etaSeconds !== null ? `About ${etaSeconds} seconds left` : `${progress}%`}{laneCount > 1 ? `, ${laneCount} at a time` : ''}</span>
         </div>
       )}
 
@@ -2557,6 +2584,8 @@ export function StudioGenerator({
         contacts={contacts}
         selectedRow={selectedRow}
         onSelect={setSelectedRow}
+        rowStatus={rowStatus}
+        rowErrors={Object.fromEntries(assets.filter((asset) => asset.status === 'failed').map((asset) => [asset.row, asset.error ?? 'Generation failed.']))}
         portraitFor={(row) => resolveAvatarSource(config, row)}
         onOpenList={() => openList(contacts.length ? 'review' : 'source')}
       />
