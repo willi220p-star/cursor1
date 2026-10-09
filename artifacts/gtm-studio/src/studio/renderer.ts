@@ -3,6 +3,7 @@ import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioCo
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
 import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, stillFormatFor, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
 import { renderMerge } from './merge';
+import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
 import { loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
 
@@ -996,11 +997,16 @@ function drawScrawledSignature(
   return width;
 }
 
-function noteParts(config: StudioConfig, contact: Contact) {
-  const copy = renderMerge(config.copy, contact);
-  const rawPostscript = config.postscript ? renderMerge(config.postscript, contact).trim() : '';
-  const postscript = rawPostscript && !/^p\.?\s*s\b/i.test(rawPostscript) ? `P.S. ${rawPostscript}` : rawPostscript;
-  const signatureText = config.signature ? renderMerge(config.signature, contact).replace(/^\s+/, '') : '';
+/**
+ * The note's words, merged for this row. `marked` keeps the hook sentinels for drawHandwriting
+ * (only when a mark is wanted); measuring and everything else gets plain text.
+ */
+function noteParts(config: StudioConfig, contact: Contact, marked = false) {
+  const options = { hookColumn: config.hookColumn, markHook: marked && config.hookMark !== 'none' };
+  const copy = renderMerge(config.copy, contact, options);
+  const rawPostscript = config.postscript ? renderMerge(config.postscript, contact, options).trim() : '';
+  const postscript = rawPostscript && !/^p\.?\s*s\b/i.test(stripHookMarks(rawPostscript)) ? `P.S. ${rawPostscript}` : rawPostscript;
+  const signatureText = config.signature ? stripHookMarks(renderMerge(config.signature, contact)).replace(/^\s+/, '') : '';
   return { copy, postscript, signatureText };
 }
 
@@ -1079,6 +1085,103 @@ function fitHandwritingGrid(
   }
 }
 
+/** Writing cost of one hook mark in the Handwriting GIF: the pen takes a beat to underline. */
+const HOOK_MARK_COST = 3.2;
+
+type InkPoint = { x: number; y: number; w: number };
+
+/**
+ * Fills a pen stroke through the points, its width following each point's pressure.
+ * `progress` draws only the first part, for a mark that is still being made.
+ */
+function inkTrail(context: CanvasRenderingContext2D, points: InkPoint[], progress = 1) {
+  const count = Math.max(2, Math.min(points.length, Math.ceil(points.length * Math.max(0, Math.min(1, progress)))));
+  const trail = points.slice(0, count);
+  if (trail.length < 2) return trail[trail.length - 1];
+  const left: Array<[number, number]> = [];
+  const right: Array<[number, number]> = [];
+  trail.forEach((point, index) => {
+    const prev = trail[Math.max(0, index - 1)];
+    const next = trail[Math.min(trail.length - 1, index + 1)];
+    const dx = next.x - prev.x;
+    const dy = next.y - prev.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const nx = -dy / length;
+    const ny = dx / length;
+    left.push([point.x + nx * point.w * 0.5, point.y + ny * point.w * 0.5]);
+    right.push([point.x - nx * point.w * 0.5, point.y - ny * point.w * 0.5]);
+  });
+  context.beginPath();
+  context.moveTo(left[0][0], left[0][1]);
+  left.forEach(([x, y]) => context.lineTo(x, y));
+  for (let i = right.length - 1; i >= 0; i--) context.lineTo(right[i][0], right[i][1]);
+  context.closePath();
+  context.fill();
+  return trail[trail.length - 1];
+}
+
+/** Pen pressure along a quick stroke: lands light, presses through the middle, lifts off thin. */
+function strokePressure(t: number, seed: number, salt: number) {
+  const body = Math.pow(Math.sin(Math.PI * Math.min(1, Math.max(0, t))), 0.55);
+  return (0.32 + 0.68 * body) * (0.88 + 0.12 * Math.sin(t * 9 + unitRand(seed, salt) * 6));
+}
+
+/**
+ * A quick pen underline under x0..x1: starts a touch before the words, runs slightly uphill or
+ * down with a small bow, overshoots the last letter and flicks off. It stays within about
+ * 0.18 of the writing size below the baseline so it never reaches the next line's words.
+ */
+function hookUnderline(x0: number, x1: number, baseline: number, size: number, seed: number, salt: number): InkPoint[] {
+  const start = x0 - size * (0.03 + unitRand(seed, salt) * 0.08);
+  const end = x1 + size * (0.12 + unitRand(seed, salt + 1) * 0.2);
+  const drop = size * (0.085 + unitRand(seed, salt + 2) * 0.04);
+  const rise = (unitRand(seed, salt + 3) - 0.62) * size * 0.07;
+  const bow = (unitRand(seed, salt + 4) - 0.5) * size * 0.05;
+  const phase = unitRand(seed, salt + 5) * Math.PI * 2;
+  const weight = size * (0.042 + unitRand(seed, salt + 6) * 0.014);
+  const steps = Math.max(14, Math.round((end - start) / (size * 0.18)));
+  const points: InkPoint[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const flick = t > 0.86 ? Math.pow((t - 0.86) / 0.14, 2) * size * 0.06 : 0;
+    const y = baseline + drop + rise * t + bow * Math.sin(Math.PI * t) + Math.sin(t * 7.3 + phase) * size * 0.007 - flick;
+    const w = weight * strokePressure(t, seed, salt + 7);
+    points.push({ x: start + (end - start) * t, y: Math.min(baseline + size * 0.18 - w * 0.5, y), w });
+  }
+  return points;
+}
+
+/**
+ * A loose oval around one line of words, drawn in one go: it starts top left, goes round once
+ * and carries on a little past where it began, slightly wider on the second pass, so the ends
+ * cross instead of meeting neatly.
+ */
+function hookCircle(x0: number, x1: number, baseline: number, size: number, seed: number, salt: number): InkPoint[] {
+  const cx = (x0 + x1) / 2 + (unitRand(seed, salt) - 0.5) * size * 0.1;
+  const cy = baseline - size * (0.3 + unitRand(seed, salt + 1) * 0.05);
+  const rx = (x1 - x0) / 2 + size * (0.06 + unitRand(seed, salt + 2) * 0.08);
+  const ry = size * (0.6 + unitRand(seed, salt + 3) * 0.06);
+  const tilt = (unitRand(seed, salt + 4) - 0.5) * 0.07;
+  const startAngle = Math.PI * (1.12 + unitRand(seed, salt + 5) * 0.16);
+  const sweep = Math.PI * 2 + 0.3 + unitRand(seed, salt + 6) * 0.35;
+  const phase = unitRand(seed, salt + 7) * Math.PI * 2;
+  const weight = size * (0.036 + unitRand(seed, salt + 8) * 0.012);
+  const steps = Math.max(40, Math.round((rx + ry) / (size * 0.06)));
+  const cos = Math.cos(tilt);
+  const sin = Math.sin(tilt);
+  const points: InkPoint[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const angle = startAngle - sweep * t;
+    const swell = 1 + 0.035 * Math.sin(angle * 3 + phase) + 0.07 * t;
+    // A squarish oval hugs a row of words better than an ellipse, which bulges into its neighbours.
+    const ex = rx * swell * Math.sign(Math.cos(angle)) * Math.pow(Math.abs(Math.cos(angle)), 0.7);
+    const ey = ry * swell * Math.sign(Math.sin(angle)) * Math.pow(Math.abs(Math.sin(angle)), 0.85);
+    points.push({ x: cx + ex * cos - ey * sin, y: cy + ex * sin + ey * cos, w: weight * strokePressure(t, seed, salt + 9) });
+  }
+  return points;
+}
+
 function drawHandwriting(
   context: CanvasRenderingContext2D,
   config: StudioConfig,
@@ -1105,11 +1208,13 @@ function drawHandwriting(
   const uneven = wantUneven ? Math.max(unit, 0.72) : unit;
   const fontSize = config.fontSize * scale;
   const extraTracking = (config.letterSpacing ?? 0) * scale;
-  const { copy, postscript, signatureText } = noteParts(config, contact);
+  const { copy, postscript, signatureText } = noteParts(config, contact, true);
+  const hookMark = config.hookMark ?? 'underline';
   const writing = config.mode === 'handgif';
   const fullText = `${copy}${signatureText}${postscript}`;
+  const markCount = hookMark === 'none' ? 0 : fullText.split(HOOK_OPEN).length - 1;
   const reveal = writing ? Math.max(0, Math.min(1, (animationPhase - 0.04) / 0.88)) : 1;
-  const budget = writing ? { left: writingCost(fullText) * reveal } : null;
+  const budget = writing ? { left: (writingCost(stripHookMarks(fullText)) + markCount * HOOK_MARK_COST) * reveal } : null;
   const leftX = paperX + paperW * config.noteX;
   const maxWidth = writingWidth(fontSize, paperX, paperW, leftX, scale);
   let pen = {
@@ -1140,11 +1245,41 @@ function drawHandwriting(
     return shown;
   };
 
-  /** Writes text on consecutive rules starting at `startRow`; returns the next free row. */
-  const paintLines = (text: string, startRow: number, allowMistakes: boolean, lineSalt: number, sizeFactor = 1, extraTilt = 0) => {
+  /** How much of a hook mark the pen has drawn: all of it on a still, part of it mid-GIF. */
+  const takeMark = () => {
+    if (!budget) return 1;
+    if (budget.left <= 0) return 0;
+    const spent = Math.min(budget.left, HOOK_MARK_COST);
+    budget.left -= spent;
+    return spent / HOOK_MARK_COST;
+  };
+
+  /**
+   * Writes text on consecutive rules starting at `startRow`; returns the next free row.
+   * The text may carry hook sentinels: those words get underlined or circled once written.
+   */
+  const paintLines = (markedText: string, startRow: number, allowMistakes: boolean, lineSalt: number, sizeFactor = 1, extraTilt = 0) => {
     const size = fontSize * sizeFactor * handwritingScale(fontFamily);
     context.font = `${size}px "${fontFamily}", "Homemade Apple", Caveat, cursive`;
+    const { text, words: tokens } = hookWords(markedText);
     const lines = wrapLines(context, text, maxWidth);
+    // Wrapping only moves whitespace, so the written words line up one to one with the tokens.
+    let tokenIndex = 0;
+    const lineTokens = lines.map((line) => (line ? line.split(/\s+/) : ['']).map((word): HookWord | null => {
+      if (!word) return null;
+      const token = tokens[tokenIndex++];
+      return token && token.text === word && token.span >= 0 && hookMark !== 'none' ? token : null;
+    }));
+    // Where each hook ends, and whether it sits on one line (only then can it be circled).
+    const spanEnd = new Map<number, string>();
+    const spanLines = new Map<number, Set<number>>();
+    lineTokens.forEach((row, lineIndex) => row.forEach((token, wordIndex) => {
+      if (!token) return;
+      spanEnd.set(token.span, `${lineIndex}:${wordIndex}`);
+      spanLines.set(token.span, (spanLines.get(token.span) ?? new Set<number>()).add(lineIndex));
+    }));
+    const segments: Array<{ span: number; line: number; x0: number; x1: number; ys: number[]; pivotX: number; pivotY: number; rot: number }> = [];
+    const spanProgress = new Map<number, number>();
     const mistakeSlots = new Set<string>();
     if (allowMistakes && wantErrors) {
       // A real slip happens mid-sentence: never the first line, never the first word of a line.
@@ -1153,6 +1288,8 @@ function drawHandwriting(
       lines.forEach((line, lineIndex) => {
         if (lineIndex === 0) return;
         line.split(/\s+/).forEach((word, wordIndex) => {
+          // No slips inside the hook: it is the line the reader is meant to see.
+          if (lineTokens[lineIndex]?.[wordIndex]) return;
           if (wordIndex > 0 && /^[A-Za-z]{5,}[,.]?$/.test(word)) candidates.push(`${lineIndex}:${wordIndex}`);
         });
       });
@@ -1199,6 +1336,22 @@ function drawHandwriting(
           cursor += wrongWidth + Math.max(gap, size * 0.42);
         }
         const width = drawInkWord(context, visible, cursor, wordY, size, fontFamily, seed, salt, wantNeat ? unit * 0.4 : unit, extraTracking);
+        const token = lineTokens[lineIndex]?.[wordIndex];
+        if (token && visible === word) {
+          // Only the hook letters of the word, so "launch." is underlined under "launch".
+          const letters = Array.from(word);
+          const ratio = width / Math.max(1, context.measureText(word).width);
+          const x0 = cursor + context.measureText(letters.slice(0, token.from).join('')).width * ratio;
+          const x1 = cursor + context.measureText(letters.slice(0, token.to).join('')).width * ratio;
+          const segment = segments.find((item) => item.span === token.span && item.line === lineIndex);
+          if (segment) {
+            segment.x1 = x1;
+            segment.ys.push(wordY);
+          } else {
+            segments.push({ span: token.span, line: lineIndex, x0, x1, ys: [wordY], pivotX: leftX + lineJitterX, pivotY: drawY, rot: lineRot });
+          }
+          if (spanEnd.get(token.span) === `${lineIndex}:${wordIndex}`) spanProgress.set(token.span, takeMark());
+        }
         const nibX = cursor + Math.max(width * 0.88, width - size * 0.12);
         const across = (nibX - paperX) / Math.max(1, paperW);
         const lifting = visible !== word ? 0 : 8 * scale;
@@ -1212,6 +1365,32 @@ function drawHandwriting(
         };
       });
       context.restore();
+    });
+    // Marks go on once their words are written, each line's piece in that line's slant.
+    spanProgress.forEach((progress, span) => {
+      if (progress <= 0) return;
+      const pieces = segments.filter((item) => item.span === span);
+      const circle = hookMark === 'circle' && (spanLines.get(span)?.size ?? 0) === 1 && pieces.length === 1;
+      pieces.forEach((piece, index) => {
+        const share = Math.max(0, Math.min(1, progress * pieces.length - index));
+        if (share <= 0 || piece.x1 <= piece.x0) return;
+        const baseline = piece.ys.reduce((sum, y) => sum + y, 0) / piece.ys.length;
+        const salt = 500 + span * 37 + index * 11 + lineSalt;
+        const points = circle
+          ? hookCircle(piece.x0, piece.x1, baseline, size, seed, salt)
+          : hookUnderline(piece.x0, piece.x1, baseline, size, seed, salt);
+        context.save();
+        context.translate(piece.pivotX, piece.pivotY);
+        context.rotate(piece.rot);
+        context.translate(-piece.pivotX, -piece.pivotY);
+        context.globalAlpha *= 0.9;
+        const tip = inkTrail(context, points, share);
+        context.restore();
+        if (tip && share < 1 && writing) {
+          const across = (tip.x - paperX) / Math.max(1, paperW);
+          pen = { x: tip.x, y: tip.y, show: reveal < 0.97, lift: 0, tilt: -0.2 + across * 0.26 };
+        }
+      });
     });
     return startRow + Math.max(1, lines.length);
   };
@@ -1282,7 +1461,7 @@ function drawTypedNote(
   const h = canvasHeight * zone.height;
   const message = config.showMessage === false ? '' : resolveMessage(config, contact);
   let body = [
-    renderMerge(config.copy, contact),
+    renderMerge(config.copy, contact, { hookColumn: config.hookColumn }),
     message,
     config.signature ? renderMerge(config.signature, contact) : '',
     config.postscript ? renderMerge(config.postscript, contact) : '',

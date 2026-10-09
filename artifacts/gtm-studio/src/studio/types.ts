@@ -124,6 +124,21 @@ export const avatarColumnAliases = [
   'pfp',
 ];
 export const messageColumnAliases = ['msg', 'message', 'note', 'personal_message', 'body', 'copy'];
+/** Spreadsheet columns that usually hold the one personal line about the prospect. */
+export const hookColumnAliases = [
+  'hook',
+  'personal_hook',
+  'icebreaker',
+  'ice_breaker',
+  'personalization',
+  'personalisation',
+  'personalized_line',
+  'personalised_line',
+  'personal_line',
+  'first_line',
+];
+
+export type HookMark = 'underline' | 'circle' | 'none';
 
 export function looksLikeImageSource(value: string) {
   const trimmed = value.trim();
@@ -464,6 +479,10 @@ export type StudioConfig = {
   websiteColumn?: string;
   avatarColumn?: string;
   messageColumn?: string;
+  /** Column {hook} reads from. Unset: guessed from names like hook, icebreaker, first_line. */
+  hookColumn?: string;
+  /** How the hook is marked in the note, like a pen would. Default underline. */
+  hookMark?: HookMark;
   avatarImage?: string;
   avatarUrl?: string;
   avatarShape: AvatarShape;
