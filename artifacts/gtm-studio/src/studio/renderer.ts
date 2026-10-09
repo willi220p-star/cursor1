@@ -1,9 +1,11 @@
 import { publicAssetUrl } from '@/lib/utils';
-import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode, TextLayer } from './types';
+import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
 import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, stillFormatFor, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
 import { renderMerge } from './merge';
 import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
+import { drawCaptionLayer, highlightWords } from './caption-draw';
+import { canvasCaptionMeasure, captionFont } from './caption-fit';
 import { loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
 
@@ -625,15 +627,6 @@ function realismAngle(seed: number, realism: number) {
   return (unit - 0.5) * 5.2 * (realism / 100);
 }
 
-function highlightWords(value?: string) {
-  return (value ?? '').split(/[,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean);
-}
-
-function wordMatches(word: string, tokens: string[]) {
-  const clean = word.replace(/[^\w'-]/g, '').toLowerCase();
-  return Boolean(clean) && tokens.some((token) => token === clean || clean.includes(token) || token.includes(clean));
-}
-
 function colorWithAlpha(hex: string, alpha: number) {
   const raw = hex.replace('#', '').trim();
   const full = raw.length === 3 ? raw.split('').map((part) => part + part).join('') : raw;
@@ -715,12 +708,6 @@ function drawMarkerStroke(
   context.restore();
 }
 
-function sliceTyped(text: string, phase: number, animation?: string) {
-  if (animation !== 'type') return text;
-  const t = Math.max(0, Math.min(1, phase));
-  return text.slice(0, Math.max(0, Math.floor(text.length * t)));
-}
-
 function glyphCost(ch: string) {
   if (ch === '\n') return 0.55;
   if (/\s/.test(ch)) return 0.28;
@@ -735,91 +722,6 @@ function writingCost(text: string) {
   let total = 0;
   for (const ch of text) total += glyphCost(ch);
   return Math.max(0.01, total);
-}
-
-function drawLayer(context: CanvasRenderingContext2D, layer: TextLayer, contact: Contact, width: number, height: number, phase = 1) {
-  const x = layer.x * width;
-  const y = layer.y * height;
-  const maxWidth = layer.width * width;
-  const size = Math.max(18, layer.fontSize * (width / 1080));
-  const animation = layer.animation ?? 'still';
-  const pop = animation === 'pop' ? (phase < 0.45 ? 0.55 + phase * 1.2 : 1) : 1;
-  context.save();
-  if (animation === 'still' || animation === 'highlight') context.globalAlpha = phase;
-  else context.globalAlpha = 1;
-  if (layer.boxFill) {
-    context.fillStyle = layer.boxFill;
-    context.globalAlpha *= 0.88;
-    context.fillRect(x, y, maxWidth, layer.height * height);
-    context.globalAlpha = 1;
-  }
-  const cx = x + maxWidth / 2;
-  const cy = y + (layer.height * height) / 2;
-  context.translate(cx, cy);
-  context.scale(pop, pop);
-  context.translate(-cx, -cy);
-  context.font = `900 ${size}px Anton, Impact, sans-serif`;
-  context.textAlign = layer.align;
-  context.textBaseline = 'top';
-  context.fillStyle = layer.color;
-  context.strokeStyle = '#0b0b0b';
-  context.lineJoin = 'round';
-  context.miterLimit = 2;
-  if (animation === 'glow') {
-    context.shadowColor = layer.highlightColor || layer.color;
-    context.shadowBlur = 10 + 22 * Math.abs(Math.sin(phase * Math.PI * 2));
-  }
-  const merged = sliceTyped(renderMerge(layer.text, contact), phase, animation);
-  const tokens = highlightWords(layer.highlight);
-  const marker = layer.highlightColor || '#ffe566';
-  const anchor = layer.align === 'center' ? x + maxWidth / 2 : layer.align === 'right' ? x + maxWidth : x;
-  const lines = wrapLines(context, merged, maxWidth);
-  lines.forEach((line, index) => {
-    const lineY = y + index * size * 1.02;
-    if (animation === 'highlight') {
-      context.save();
-      context.fillStyle = marker;
-      context.globalAlpha = 0.72;
-      const painted = Math.max(8, context.measureText(line).width * Math.max(0.08, phase));
-      const left = layer.align === 'center' ? anchor - painted / 2 : layer.align === 'right' ? anchor - painted : anchor;
-      context.fillRect(left - 6, lineY + size * 0.55, painted + 12, size * 0.38);
-      context.restore();
-    }
-    if (tokens.length) {
-      const words = line.split(/(\s+)/);
-      const total = context.measureText(line).width;
-      let cursor = layer.align === 'center' ? anchor - total / 2 : layer.align === 'right' ? anchor - total : anchor;
-      context.textAlign = 'left';
-      words.forEach((chunk) => {
-        const widthChunk = context.measureText(chunk).width;
-        if (wordMatches(chunk, tokens)) {
-          context.fillStyle = marker;
-          context.globalAlpha = 0.8;
-          context.fillRect(cursor - 3, lineY + size * 0.12, widthChunk + 6, size * 0.92);
-          context.globalAlpha = 1;
-          context.fillStyle = layer.color;
-        }
-        if (layer.outline) {
-          context.lineWidth = Math.max(8, size * 0.16);
-          context.strokeText(chunk, cursor, lineY);
-          context.lineWidth = Math.max(4, size * 0.09);
-          context.strokeText(chunk, cursor, lineY);
-        }
-        context.fillText(chunk, cursor, lineY);
-        cursor += widthChunk;
-      });
-      context.textAlign = layer.align;
-      return;
-    }
-    if (layer.outline) {
-      context.lineWidth = Math.max(8, size * 0.16);
-      context.strokeText(line, anchor, lineY, maxWidth);
-      context.lineWidth = Math.max(4, size * 0.09);
-      context.strokeText(line, anchor, lineY, maxWidth);
-    }
-    context.fillText(line, anchor, lineY, maxWidth);
-  });
-  context.restore();
 }
 
 function drawWritingHandPhoto(
@@ -1537,6 +1439,7 @@ async function ensureArtefactTypefaces(config: StudioConfig) {
       document.fonts.load(`500 ${size}px "Manrope"`),
       document.fonts.load(`${size}px "Homemade Apple"`),
       document.fonts.load(`${size}px Caveat`),
+      document.fonts.load(captionFont(size)),
       document.fonts.ready,
     ]);
     artefactTypefacesReady = true;
@@ -1955,6 +1858,7 @@ export async function renderStudioCanvas(
     const wobbleRot = config.animation === 'wobble' || config.animation === 'drift'
       ? Math.sin(animationPhase * Math.PI * 2) * 0.05
       : 0;
+    const measureCaption = canvasCaptionMeasure(document.createElement('canvas').getContext('2d') ?? context);
     for (const layer of config.layers) {
       context.save();
       const cx = (layer.x + layer.width / 2 + offset + shake) * width;
@@ -1963,12 +1867,15 @@ export async function renderStudioCanvas(
       context.rotate(wobbleRot);
       context.scale(scaleMotion, scaleMotion);
       context.translate(-cx, -cy);
-      drawLayer(
+      drawCaptionLayer(
         context,
         { ...layer, x: layer.x + offset + shake, y: layer.y - bounce - rise },
         contact,
         width,
         height,
+        target.width,
+        target.height,
+        measureCaption,
         phase,
       );
       context.restore();

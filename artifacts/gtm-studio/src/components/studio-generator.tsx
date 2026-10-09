@@ -54,6 +54,7 @@ import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
 import { batchConcurrency, runQueue } from '@/studio/batch-queue';
 import { loadArtefactFonts } from '@/studio/fonts';
+import { CAPTION_LINE_HEIGHT, CAPTION_STROKE, CAPTION_STROKE_COLOR, canvasCaptionMeasure, captionFont, fitLayerCaption } from '@/studio/caption-fit';
 import { missingTags, safeFilename, renderMerge } from '@/studio/merge';
 import { countWords, noteAdvice, type NoteFitInfo } from '@/studio/note-advice';
 import {
@@ -186,6 +187,72 @@ function StyledLayerText({ text, highlight, color }: { text: string; highlight?:
           ? <mark key={`${part}-${index}`} style={{ background: color || '#ffe566', color: 'inherit', padding: '0 .12em', borderRadius: 2 }}>{part}</mark>
           : <span key={`${part}-${index}`}>{part}</span>
       ))}
+    </>
+  );
+}
+
+let captionFontsLoaded: Promise<void> | null = null;
+
+/** Resolve once the caption face is ready to measure, so the live overlay wraps like the export. */
+function loadCaptionFonts() {
+  captionFontsLoaded ??= loadArtefactFonts()
+    .then(() => document.fonts.load(captionFont(40), 'Hg'))
+    .then(() => undefined, () => undefined);
+  return captionFontsLoaded;
+}
+
+/**
+ * Meme captions as DOM text while the stage animates. Uses the same fit as the renderer and the batch
+ * worker (measured with a canvas 2D context at the channel's native size), so lines and size match the export.
+ */
+function LiveCaptionLayers({ layers, contact, animation, width, height }: { layers: TextLayer[]; contact: Contact; animation?: string; width: number; height: number }) {
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void loadCaptionFonts().then(() => { if (live) setFontsReady(true); });
+    return () => { live = false; };
+  }, []);
+  const fits = useMemo(() => {
+    const context = document.createElement('canvas').getContext('2d');
+    if (!context) return [];
+    const measure = canvasCaptionMeasure(context);
+    return layers.map((layer) => fitLayerCaption(layer, renderMerge(layer.text, contact), width, height, measure));
+    // fontsReady re-measures once the caption face has loaded.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layers, contact, width, height, fontsReady]);
+  // Container units of the stage, so the overlay scales with it exactly like the canvas does.
+  const unit = (value: number) => `${(value / width) * 100}cqw`;
+  return (
+    <>
+      {layers.map((layer, index) => {
+        const fit = fits[index];
+        if (!fit) return null;
+        return (
+          <div
+            key={`live-${layer.id}`}
+            className={`meme-live-layer is-${animation} is-text-${layer.animation ?? 'still'}`}
+            style={{
+              left: `${layer.x * 100}%`,
+              top: `${layer.y * 100}%`,
+              width: `${layer.width * 100}%`,
+              height: `${layer.height * 100}%`,
+              fontSize: unit(fit.fontSize),
+              lineHeight: CAPTION_LINE_HEIGHT,
+              color: layer.color,
+              textAlign: layer.align,
+              WebkitTextStroke: layer.outline ? `${unit(Math.max(1.5, fit.fontSize * CAPTION_STROKE))} ${CAPTION_STROKE_COLOR}` : '0',
+              textShadow: layer.animation === 'glow' ? `0 0 18px ${layer.highlightColor || layer.color}` : 'none',
+              background: layer.boxFill,
+            }}
+          >
+            {fit.lines.map((line, lineIndex) => (
+              <span key={lineIndex} className="meme-live-line">
+                <StyledLayerText text={line} highlight={layer.highlight} color={layer.highlightColor} />
+              </span>
+            ))}
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -2782,28 +2849,9 @@ export function StudioGenerator({
                 />
               )}
               {cutMode && config.effect === 'fire' && <div className="meme-fire-veil" />}
-              {cutMode && liveMotion && config.layers.map((layer) => (
-                <div
-                  key={`live-${layer.id}`}
-                  className={`meme-live-layer is-${config.animation} is-text-${layer.animation ?? 'still'}`}
-                  style={{
-                    left: `${layer.x * 100}%`,
-                    top: `${layer.y * 100}%`,
-                    width: `${layer.width * 100}%`,
-                    height: `${layer.height * 100}%`,
-                    fontSize: `clamp(18px, ${layer.fontSize * 0.42}px, 64px)`,
-                    color: layer.color,
-                    textAlign: layer.align,
-                    WebkitTextStroke: layer.outline ? '2.4px #111' : '0',
-                    textShadow: layer.animation === 'glow'
-                      ? `0 0 18px ${layer.highlightColor || layer.color}`
-                      : layer.outline ? '-2px -2px 0 #111, 2px -2px 0 #111, -2px 2px 0 #111, 2px 2px 0 #111, 0 3px 0 #111' : 'none',
-                    background: layer.boxFill,
-                  }}
-                >
-                  <StyledLayerText text={renderMerge(layer.text, contact)} highlight={layer.highlight} color={layer.highlightColor} />
-                </div>
-              ))}
+              {cutMode && liveMotion && (
+                <LiveCaptionLayers layers={config.layers} contact={contact} animation={config.animation} width={canvasDims.width} height={canvasDims.height} />
+              )}
               {cropMode === 'off' && paperMode && (
                 <div
                   className={`canvas-zone ${activeCanvasZone === 'note' ? 'is-active' : ''}`}
