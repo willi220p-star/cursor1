@@ -14,6 +14,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { relativeTime } from '@/studio/activity';
+import { reportError } from '@/lib/report';
+import { withRetry } from '@/lib/retry';
 import {
   createFileFolder,
   listCampaigns,
@@ -103,11 +105,23 @@ export function Library({
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
 
+  const [loadFailed, setLoadFailed] = useState<string[]>([]);
   const load = () => {
-    listStoredFiles(userId).then(setFiles).catch(() => setFiles([]));
-    listFileFolders(userId).then(setFolders).catch(() => setFolders([]));
-    listTemplateConfigs(userId).then(setTemplates).catch(() => setTemplates([]));
-    listCampaigns(userId).then(setCampaigns).catch(() => setCampaigns([]));
+    setLoadFailed([]);
+    // Each list loads on its own, so one failure still shows the rest. Failures are named, not hidden.
+    const fetchList = <T,>(label: string, fetch: () => Promise<T[]>, set: (rows: T[]) => void) => {
+      withRetry(fetch)
+        .then(set)
+        .catch((error) => {
+          reportError(error, { area: 'library', list: label });
+          set([]);
+          setLoadFailed((current) => (current.includes(label) ? current : [...current, label]));
+        });
+    };
+    fetchList('files', () => listStoredFiles(userId), setFiles);
+    fetchList('folders', () => listFileFolders(userId), setFolders);
+    fetchList('templates', () => listTemplateConfigs(userId), setTemplates);
+    fetchList('campaigns', () => listCampaigns(userId), setCampaigns);
   };
 
   useEffect(() => {
@@ -316,6 +330,13 @@ export function Library({
           <button type="button" className="chip is-dashed" onClick={() => ask({ kind: 'create-folder' })}>
             <FolderPlus size={14} aria-hidden /> New folder
           </button>
+        </div>
+      )}
+
+      {loadFailed.length > 0 && (
+        <div className="load-error" role="alert">
+          <span>Could not load your {loadFailed.join(', ')}. Check your connection; nothing has been deleted.</span>
+          <button type="button" className="btn btn-quiet btn-sm" onClick={load}>Retry</button>
         </div>
       )}
 

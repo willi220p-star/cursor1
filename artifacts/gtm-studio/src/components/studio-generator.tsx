@@ -156,6 +156,8 @@ import { publicAssetUrl } from '@/lib/utils';
 import { studioInfo } from '@/studio/studios';
 import { BatchReview } from '@/components/studio/batch-review';
 import { ContactFilmstrip } from '@/components/studio/contact-filmstrip';
+import { PanelBoundary } from '@/components/error-boundary';
+import { reportError } from '@/lib/report';
 import { ImportDialog, type ImportResult, type ImportStep } from '@/components/studio/import-dialog';
 import type { FieldAssignment } from '@/studio/field-map';
 import { SampleStrip } from '@/components/studio/sample-strip';
@@ -455,7 +457,11 @@ export function StudioGenerator({
           return normalizeConfig(mode, { ...match.config, templateId: match.id, campaignName: match.name, mode });
         });
       })
-      .catch(() => setSavedTemplates([]));
+      .catch((reason) => {
+        reportError(reason, { area: 'saved-looks', mode });
+        setSavedTemplates([]);
+        toast.error('Could not load your saved looks', { description: 'Your current look is safe. Reload the page to try again.' });
+      });
   };
 
   useEffect(() => {
@@ -1440,7 +1446,14 @@ export function StudioGenerator({
     if (userId && supabaseConfigured && uploadable.length) {
       try {
         if (!quiet) toast('Uploading generated files to Supabase…');
-        const uploaded = await uploadGeneratedAssets(uploadable, config.campaignName, userId, { campaignId: config.id, mode });
+        let uploaded = await uploadGeneratedAssets(uploadable, config.campaignName, userId, { campaignId: config.id, mode });
+        // A brief network drop fails only some files; send those again before giving up.
+        for (let attempt = 1; attempt <= 2 && uploaded.some((asset) => asset.uploadStatus === 'failed'); attempt++) {
+          await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
+          const retried = await uploadGeneratedAssets(uploaded.filter((asset) => asset.uploadStatus === 'failed'), config.campaignName, userId, { campaignId: config.id, mode });
+          const again = new Map(retried.map((asset) => [asset.id, asset]));
+          uploaded = uploaded.map((asset) => again.get(asset.id) ?? asset);
+        }
         const byId = new Map(uploaded.map((asset) => [asset.id, asset]));
         nextAssets = generated.map((asset) => byId.get(asset.id) ?? asset);
         const failedUploads = uploaded.filter((asset) => asset.uploadStatus === 'failed').length;
@@ -2791,7 +2804,7 @@ export function StudioGenerator({
 
         {desktop && (
           <aside className="ink-well" aria-label="Inspector">
-            {inspector}
+            <PanelBoundary label="The settings panel">{inspector}</PanelBoundary>
           </aside>
         )}
       </div>
@@ -2818,7 +2831,7 @@ export function StudioGenerator({
             <SheetContent side="bottom" className="sheet-inspector h-[90dvh] gap-0 border-border bg-card shadow-[var(--shadow-overlay)] [&>button]:right-3 [&>button]:top-1 [&>button]:z-10 [&>button]:h-11 [&>button]:w-11 [&>button]:rounded-md [&>button]:opacity-100 [&>button>svg]:mx-auto [&>button>svg]:h-5 [&>button>svg]:w-5">
               <SheetTitle className="sr-only">Inspector</SheetTitle>
               <SheetDescription className="sr-only">Copy, look and ship controls for this campaign.</SheetDescription>
-              <div className="flex min-h-0 flex-1 flex-col pr-12">{inspector}</div>
+              <div className="flex min-h-0 flex-1 flex-col pr-12"><PanelBoundary label="The settings panel">{inspector}</PanelBoundary></div>
             </SheetContent>
           </Sheet>
         </>
