@@ -56,3 +56,7 @@ Thumbs.db
 
 # Vercel local link cache (keep vercel.json)
 .vercel
+
+# Test output
+test-results/
+playwright-report/

@@ -1,0 +1,41 @@
+name: Checks
+
+# Runs on every pull request so a broken change is caught before it is merged and deployed.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - name: Typecheck
+        run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm --filter @workspace/gtm-studio run test
+      - name: Browser tests
+        working-directory: artifacts/gtm-studio
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:e2e
+      - name: Production build
+        working-directory: artifacts/gtm-studio
+        env:
+          BASE_PATH: /cursor1/
+        run: pnpm run build

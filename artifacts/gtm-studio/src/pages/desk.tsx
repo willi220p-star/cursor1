@@ -7,7 +7,6 @@ import { publicAssetUrl } from '@/lib/public-url';
 import { exportsInLast30Days, requestSampleList } from '@/studio/activity';
 import { listCampaigns, subscribeTemplateChanges } from '@/studio/cloud';
 import { reportError } from '@/lib/report';
-import { withRetry } from '@/lib/retry';
 import { renderMerge } from '@/studio/merge';
 import { openCampaignInStudio, openTemplateInStudio, studioInfo, type StudioKey } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate } from '@/studio/types';
@@ -51,7 +50,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
   const [campaignsFailed, setCampaignsFailed] = useState(false);
   const refreshStats = () => {
     setCampaignsFailed(false);
-    withRetry(() => listCampaigns(userId)).then(setCampaigns).catch((error) => {
+    listCampaigns(userId).then(setCampaigns).catch((error) => {
       reportError(error, { area: 'desk' });
       setCampaignsFailed(true);
       setCampaigns([]);

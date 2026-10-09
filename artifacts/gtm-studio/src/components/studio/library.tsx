@@ -15,7 +15,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { relativeTime } from '@/studio/activity';
 import { reportError } from '@/lib/report';
-import { withRetry } from '@/lib/retry';
 import {
   createFileFolder,
   listCampaigns,
@@ -109,8 +108,9 @@ export function Library({
   const load = () => {
     setLoadFailed([]);
     // Each list loads on its own, so one failure still shows the rest. Failures are named, not hidden.
+    // The Supabase client already retries temporary errors, so no second retry layer here.
     const fetchList = <T,>(label: string, fetch: () => Promise<T[]>, set: (rows: T[]) => void) => {
-      withRetry(fetch)
+      fetch()
         .then(set)
         .catch((error) => {
           reportError(error, { area: 'library', list: label });

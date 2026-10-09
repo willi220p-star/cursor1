@@ -29,6 +29,13 @@ jobs:
       - run: pnpm install
       - name: Typecheck
         run: pnpm run typecheck
+      - name: Unit tests
+        run: pnpm --filter @workspace/gtm-studio run test
+      - name: Browser tests
+        working-directory: artifacts/gtm-studio
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm run test:e2e
       - name: Build studio
         working-directory: artifacts/gtm-studio
         env:
