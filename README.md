@@ -32,10 +32,7 @@ cd artifacts/gtm-studio
 PORT=43123 BASE_PATH=/ pnpm run dev
 ```
 
-Sign in with:
-
-- **Username:** `operator@dgk.internal`
-- **Password:** `VioletPulse#2026Dgk`
+Sign in with your invited operator account. Passwords are never kept in this repo; ask the workspace owner if you need access.
 
 Invite-only. Add more people in [Supabase Auth users](https://supabase.com/dashboard/project/hvvtmhlxdmeyozyirpqo/auth/users) — Authentication → Users → Invite. Keep public signup off.
 

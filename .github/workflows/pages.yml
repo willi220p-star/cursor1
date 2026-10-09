@@ -27,6 +27,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install
+      - name: Typecheck
+        run: pnpm run typecheck
       - name: Build studio
         working-directory: artifacts/gtm-studio
         env:

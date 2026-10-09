@@ -70,6 +70,19 @@ export function Section({ title, hint, children }: { title?: string; hint?: stri
   );
 }
 
+/** Folds the less-used settings away. Children stay mounted, so their state is untouched. */
+export function MoreSettings({ children }: { children: ReactNode }) {
+  return (
+    <details className="more-settings">
+      <summary>
+        <span>More settings</span>
+        <span className="more-settings-hint">Size, crop, texture and fine-tuning</span>
+      </summary>
+      <div className="more-settings-body">{children}</div>
+    </details>
+  );
+}
+
 export function FieldRow({ id, label, hint, children }: { id?: string; label: ReactNode; hint?: ReactNode; children: ReactNode }) {
   return (
     <div className="field-row">
