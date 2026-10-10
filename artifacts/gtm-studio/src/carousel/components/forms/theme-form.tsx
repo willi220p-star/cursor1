@@ -8,15 +8,15 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
-import { Input } from "@/carousel/components/ui/input";
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 
-import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { pallettes } from "@/carousel/lib/pallettes";
 import { CustomIndicatorRadioGroupItem } from "../custom-indicator-radio-group-item";
 import { ColorThemeDisplay } from "../color-theme-display";
 import { DocumentFormReturn } from "@/carousel/lib/document-form-types";
-import { Checkbox } from "../ui/checkbox";
+import { Checkbox } from "@/components/ui/checkbox";
 
 function PalletteSelector({ form }: { form: DocumentFormReturn }) {
   const { control, setValue } = form;

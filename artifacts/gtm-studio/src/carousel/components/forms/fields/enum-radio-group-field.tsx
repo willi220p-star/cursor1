@@ -5,7 +5,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
+} from "@/components/ui/form";
 import {
   DocumentFormReturn,
   ImageStyleObjectFitFieldPath,

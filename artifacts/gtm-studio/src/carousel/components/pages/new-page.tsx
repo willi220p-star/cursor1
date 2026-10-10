@@ -1,7 +1,7 @@
 import { SlideType } from "@/carousel/lib/validation/slide-schema";
 
-import { Button } from "@/carousel/components/ui/button";
-import { Dialog, DialogTrigger } from "@/carousel/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
 import { NewSlideDialogContent } from "@/carousel/components/new-page-dialog-content";
 import { cn } from "@/carousel/lib/utils";

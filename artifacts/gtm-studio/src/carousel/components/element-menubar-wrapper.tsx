@@ -1,5 +1,5 @@
 "use client";
-import { Button } from "@/carousel/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { DocumentSchema } from "@/carousel/lib/validation/document-schema";
 import { useFormContext } from "react-hook-form";
 import {

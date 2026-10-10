@@ -8,8 +8,8 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
-import { Input } from "@/carousel/components/ui/input";
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 
 import { DocumentFormReturn } from "@/carousel/lib/document-form-types";
 import { ImageFormField } from "@/carousel/components/forms/fields/image-form-field";

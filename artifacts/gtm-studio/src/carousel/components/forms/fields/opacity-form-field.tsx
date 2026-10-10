@@ -4,8 +4,8 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
-import { Slider } from "@/carousel/components/ui/slider";
+} from "@/components/ui/form";
+import { Slider } from "@/components/ui/slider";
 import {
   DocumentFormReturn,
   ImageStyleOpacityFieldPath,

@@ -1116,8 +1116,11 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .sheet-inspector { max-height: 90dvh; display: flex; flex-direction: column; overflow: hidden; padding: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
 
 /* Carousel generator (FranciscoMoretti port) — last studio, isolated from CSV generate */
-.carousel-studio { --radius: 0.5rem; }
+.carousel-studio { --radius: 0.5rem; background: var(--background); color: var(--foreground); }
 .carousel-studio textarea { font-family: inherit; }
+.carousel-stage { background: var(--stage); }
+.carousel-sidebar { position: sticky; top: 0; max-height: calc(100dvh - 4rem); overflow: hidden; }
+.carousel-mobile-actions { position: fixed; left: 50%; bottom: 16px; z-index: 40; display: flex; gap: 8px; transform: translateX(-50%); }
 body > div:last-child > span + img { display: inline !important; }
 
 @media (max-width: 1023px) {
