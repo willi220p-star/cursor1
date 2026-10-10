@@ -838,7 +838,7 @@ export async function setCampaignClient(campaign: SavedCampaign, client: string,
 /** Adds a history event to a saved campaign without a full save (used for exports). */
 export async function appendCampaignHistory(
   campaignId: string,
-  event: { kind: 'generated' | 'uploaded' | 'exported'; rows: number; at?: string },
+  event: { kind: import('./types').CampaignEventKind; rows: number; at?: string },
   userId?: string,
 ) {
   const at = event.at ?? new Date().toISOString();

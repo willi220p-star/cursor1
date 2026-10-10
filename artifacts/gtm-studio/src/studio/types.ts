@@ -561,7 +561,8 @@ export type StudioConfig = {
   history?: CampaignEvent[];
 };
 
-export type CampaignEventKind = 'generated' | 'uploaded' | 'exported';
+/** 'cleaned' records a storage clean-up; it is history only and never changes the campaign's status. */
+export type CampaignEventKind = 'generated' | 'uploaded' | 'exported' | 'cleaned';
 export type CampaignEvent = { at: string; kind: CampaignEventKind; rows: number };
 
 export type SavedTemplate = {

@@ -7,7 +7,10 @@ import type { CampaignEvent, CampaignEventKind, Contact, SavedCampaign, StudioCo
 
 export const HISTORY_LIMIT = 50;
 
-export type CampaignStatus = 'draft' | CampaignEventKind;
+/** Events that set the campaign's status. A clean-up ('cleaned') is recorded but leaves the status alone. */
+type StatusEventKind = Exclude<CampaignEventKind, 'cleaned'>;
+
+export type CampaignStatus = 'draft' | StatusEventKind;
 
 export const statusLabels: Record<CampaignStatus, string> = {
   draft: 'Draft',
@@ -16,7 +19,9 @@ export const statusLabels: Record<CampaignStatus, string> = {
   exported: 'Exported',
 };
 
-const eventKinds: CampaignEventKind[] = ['generated', 'uploaded', 'exported'];
+const eventKinds: CampaignEventKind[] = ['generated', 'uploaded', 'exported', 'cleaned'];
+
+const isStatusEvent = (event: CampaignEvent): event is CampaignEvent & { kind: StatusEventKind } => event.kind !== 'cleaned';
 
 function isEvent(value: unknown): value is CampaignEvent {
   if (!value || typeof value !== 'object') return false;
@@ -44,12 +49,16 @@ export function pushHistory(
   return [...campaignHistory({ history }), next].slice(-Math.max(1, limit));
 }
 
-/** Draft until something happens; after that the latest event wins (by time, then by order). */
+/**
+ * Draft until something happens; after that the latest status event wins (by time, then by order).
+ * A clean-up event is skipped, so cleaning old files never changes what the campaign shows.
+ */
 export function campaignStatus(config: Pick<StudioConfig, 'history'> | null | undefined): CampaignStatus {
   const history = campaignHistory(config);
-  let latest: CampaignEvent | null = null;
+  let latest: (CampaignEvent & { kind: StatusEventKind }) | null = null;
   let latestTime = -Infinity;
   for (const event of history) {
+    if (!isStatusEvent(event)) continue;
     const time = Date.parse(event.at);
     const value = Number.isFinite(time) ? time : -Infinity;
     if (value >= latestTime) {
@@ -68,11 +77,13 @@ function shortStamp(at: string) {
   return `${day} ${time}`;
 }
 
-/** "Generated 24 rows · 9 Oct 14:02" */
+/** "Generated 24 rows · 9 Oct 14:02"; a clean-up reads "Cleaned up 37 old files · 9 Oct 15:10". */
 export function formatHistoryEntry(event: CampaignEvent) {
-  const rows = `${event.rows} ${event.rows === 1 ? 'row' : 'rows'}`;
   const stamp = shortStamp(event.at);
-  return `${statusLabels[event.kind]} ${rows}${stamp ? ` · ${stamp}` : ''}`;
+  const what = isStatusEvent(event)
+    ? `${statusLabels[event.kind]} ${event.rows} ${event.rows === 1 ? 'row' : 'rows'}`
+    : `Cleaned up ${event.rows} old ${event.rows === 1 ? 'file' : 'files'}`;
+  return `${what}${stamp ? ` · ${stamp}` : ''}`;
 }
 
 /** Newest first, for menus and tooltips. */
