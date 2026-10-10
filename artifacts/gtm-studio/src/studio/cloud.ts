@@ -1007,6 +1007,13 @@ export async function uploadGeneratedAssets(
       continue;
     }
     const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(path);
+    // The GIF's JPG poster goes up beside it. It is optional: if it fails, the GIF still counts as uploaded.
+    let still = asset.still;
+    if (still?.blob.size) {
+      const stillPath = `${userId}/${slug}/${date}/${version}-${still.filename}`;
+      const { error: stillError } = await supabase.storage.from(ASSET_BUCKET).upload(stillPath, still.blob, { contentType: 'image/jpeg', upsert: false });
+      if (!stillError) still = { ...still, publicUrl: supabase.storage.from(ASSET_BUCKET).getPublicUrl(stillPath).data.publicUrl };
+    }
     const { error: metadataError } = await supabase.from('outbound_assets').insert({
       user_id: userId,
       campaign_id: options.campaignId || null,
@@ -1016,14 +1023,14 @@ export async function uploadGeneratedAssets(
       content_type: contentType,
       bytes: asset.bytes,
       contact_key: String(asset.row),
-      metadata: { role: 'generated', mode: options.mode, row: asset.row },
+      metadata: { role: 'generated', mode: options.mode, row: asset.row, ...(still?.publicUrl ? { still_url: still.publicUrl } : {}) },
     });
     if (metadataError) {
       await supabase.storage.from(ASSET_BUCKET).remove([path]);
       results.push({ ...asset, uploadStatus: 'failed', uploadError: `Asset metadata failed: ${metadataError.message}` });
       continue;
     }
-    results.push({ ...asset, publicUrl: data.publicUrl, uploadStatus: 'uploaded', status: 'uploaded' });
+    results.push({ ...asset, ...(still ? { still } : {}), publicUrl: data.publicUrl, uploadStatus: 'uploaded', status: 'uploaded' });
   }
   return results;
 }

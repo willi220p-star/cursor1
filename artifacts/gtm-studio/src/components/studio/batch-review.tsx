@@ -99,6 +99,8 @@ export function BatchReview({
                     </button>
                   </p>
                 )}
+                {asset.note && <p className="text-xs text-muted-foreground">{asset.note}</p>}
+                {asset.still && <p className="mono truncate text-xs text-muted-foreground" title={asset.still.publicUrl ?? asset.still.filename}>+ {asset.still.filename}</p>}
                 {asset.publicUrl && <p className="mono truncate text-xs text-muted-foreground" title={asset.publicUrl}>{asset.publicUrl}</p>}
                 {asset.uploadStatus === 'failed' && <p className="text-sm text-destructive">{asset.uploadError || 'Upload failed.'}</p>}
                 <button type="button" className="btn btn-quiet w-full" onClick={() => onDownloadAsset(asset)} disabled={!asset.blob.size}>

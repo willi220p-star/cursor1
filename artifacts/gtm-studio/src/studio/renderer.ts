@@ -1,13 +1,14 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
-import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
+import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands } from './types';
 import { renderMerge } from './merge';
 import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
 import { drawCaptionLayer, highlightWords } from './caption-draw';
 import { canvasCaptionMeasure, captionFont } from './caption-fit';
 import { loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
+import { GIF_TARGET_BYTES, gifPlanFor } from './gif-plan';
 
 export const dimensions = canvasSizes;
 
@@ -1589,7 +1590,7 @@ export async function renderStudioCanvas(
   contact: Contact,
   scale = 1,
   animationPhase = 1,
-  options: { omitText?: boolean; omitImage?: boolean; omitAvatar?: boolean } = {},
+  options: { omitText?: boolean; omitImage?: boolean; omitAvatar?: boolean; omitHand?: boolean } = {},
 ) {
   await ensureArtefactTypefaces(config);
   const target = dimensions[config.channel] ?? dimensions.LinkedIn;
@@ -1735,7 +1736,7 @@ export async function renderStudioCanvas(
       }
     }
     context.restore();
-    if (pen.show && writingHand) {
+    if (pen.show && writingHand && !options.omitHand) {
       drawWritingHandPhoto(
         context,
         writingHand,
@@ -1914,39 +1915,54 @@ export async function renderPreview(
   context?.drawImage(source, 0, 0);
 }
 
+export type GifRender = {
+  blob: Blob;
+  /** JPG of the finished frame at full export size, when asked for. */
+  still?: Blob;
+  /** Set when the encoder had to shrink the GIF to fit the size target. */
+  note?: string;
+};
+
 export async function renderGifAsset(config: StudioConfig, contact: Contact, signal?: AbortSignal) {
-  const avatarAnim = config.mode === 'avatar' && (config.textMotion ?? 'still') !== 'still';
-  const writing = config.mode === 'handgif'
-    || avatarAnim
-    || (config.layers ?? []).some((layer) => (layer.animation ?? 'still') !== 'still');
-  const speed = writingSpeedSpec(config.writingSpeed);
-  const previewScale = writing && (config.mode === 'handgif' || config.mode === 'avatar')
-    ? Math.min(0.4, 0.26 + config.gifQuality * 0.018)
-    : Math.min(0.68, 0.34 + config.gifQuality * 0.035);
-  const { width, height } = dimensions[config.channel] ?? dimensions.LinkedIn;
-  const frameWidth = Math.round(width * previewScale);
-  const frameHeight = Math.round(height * previewScale);
-  const frames: ArrayBuffer[] = [];
+  return (await renderGifWithStill(config, contact, { signal })).blob;
+}
+
+/**
+ * Renders every frame from the GIF plan (see gif-plan.ts), encodes them in the worker and, with `still`, also
+ * draws the finished frame at full size as a JPG poster for inboxes that do not play GIFs.
+ */
+export async function renderGifWithStill(
+  config: StudioConfig,
+  contact: Contact,
+  options: { signal?: AbortSignal; still?: boolean } = {},
+): Promise<GifRender> {
+  const { signal } = options;
+  const plan = gifPlanFor(config);
   const sourceFrames = config.gifFrames?.length ? config.gifFrames.slice(0, 36) : undefined;
-  const frameCount = sourceFrames?.length ?? (config.mode === 'handgif' ? speed.frames : avatarAnim ? 16 : writing ? 10 : 12);
+  const configFor = (source?: number) => (sourceFrames && source !== undefined ? { ...config, customImage: sourceFrames[source] } : config);
+  const frames: ArrayBuffer[] = [];
   const delays: number[] = [];
-  for (let index = 0; index < frameCount; index++) {
+  // The poster beat and the end hold are the same picture: draw it once.
+  const drawn = new Map<string, ArrayBuffer>();
+  for (const spec of plan.frames) {
     if (signal?.aborted) throw new DOMException('Generation cancelled', 'AbortError');
-    const linear = frameCount === 1 ? 1 : index / (frameCount - 1);
-    const hold = writing && index >= frameCount - 2;
-    const phase = hold ? 1 : linear;
-    const frameConfig = sourceFrames ? { ...config, customImage: sourceFrames[index] } : config;
-    const canvas = await renderStudioCanvas(frameConfig, contact, previewScale, phase);
-    const data = canvas.getContext('2d')?.getImageData(0, 0, frameWidth, frameHeight);
-    if (!data) throw new Error('Could not prepare GIF frame.');
-    frames.push(data.data.buffer);
-    const tick = config.mode === 'handgif'
-      ? Math.round(speed.ms / Math.max(1, frameCount))
-      : Math.round(1000 / Math.max(6, config.gifFps));
-    delays.push(config.gifDelays?.[index] ?? (hold ? Math.max(400, tick * 4) : tick));
+    const key = `${spec.source ?? ''}:${spec.phase}:${spec.finished ? 1 : 0}`;
+    let pixels = drawn.get(key);
+    if (!pixels) {
+      const canvas = await renderStudioCanvas(configFor(spec.source), contact, plan.scale, spec.phase, { omitHand: spec.finished });
+      const data = canvas.getContext('2d')?.getImageData(0, 0, plan.width, plan.height);
+      if (!data) throw new Error('Could not prepare GIF frame.');
+      pixels = data.data.buffer;
+      drawn.set(key, pixels);
+    }
+    frames.push(frames.includes(pixels) ? pixels.slice(0) : pixels);
+    delays.push(spec.delay);
   }
+  const stillPromise = options.still
+    ? renderStudioCanvas(configFor(sourceFrames ? 0 : undefined), contact, 1, 1, { omitHand: true }).then((canvas) => canvasToBlob(canvas, 'image/jpeg', 0.86))
+    : undefined;
   const worker = new Worker(new URL('./gif.worker.ts', import.meta.url), { type: 'module' });
-  return await new Promise<Blob>((resolve, reject) => {
+  const encoded = await new Promise<{ blob: Blob; note?: string }>((resolve, reject) => {
     const abort = () => {
       worker.terminate();
       reject(new DOMException('Generation cancelled', 'AbortError'));
@@ -1956,7 +1972,7 @@ export async function renderGifAsset(config: StudioConfig, contact: Contact, sig
       signal?.removeEventListener('abort', abort);
       worker.terminate();
       if (!event.data.ok) reject(new Error(event.data.error));
-      else resolve(new Blob([event.data.bytes], { type: 'image/gif' }));
+      else resolve({ blob: new Blob([event.data.bytes], { type: 'image/gif' }), note: event.data.note || undefined });
     };
     worker.onerror = () => {
       signal?.removeEventListener('abort', abort);
@@ -1964,14 +1980,16 @@ export async function renderGifAsset(config: StudioConfig, contact: Contact, sig
       reject(new Error('GIF worker failed.'));
     };
     worker.postMessage({
-      width: frameWidth,
-      height: frameHeight,
+      width: plan.width,
+      height: plan.height,
       delays,
       loop: config.gifLoop,
-      colors: config.gifQuality >= 8 ? 256 : config.gifQuality >= 5 ? 128 : 64,
+      colors: plan.colors,
       frames,
+      maxBytes: config.gifKeepUnder1Mb === false ? undefined : GIF_TARGET_BYTES,
     }, frames);
   });
+  return { ...encoded, still: stillPromise ? await stillPromise : undefined };
 }
 
 export function modeLabel(mode: StudioMode) {

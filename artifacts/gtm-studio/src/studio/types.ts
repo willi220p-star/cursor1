@@ -491,6 +491,8 @@ export type StudioConfig = {
   gifFps: number;
   gifLoop: number;
   gifQuality: number;
+  /** Keep each GIF under 1 MB: an oversized first encode is redone once with fewer colours or a smaller frame. Unset means on. */
+  gifKeepUnder1Mb?: boolean;
   websiteColumn?: string;
   avatarColumn?: string;
   messageColumn?: string;
@@ -549,6 +551,10 @@ export type GeneratedAsset = {
   uploadError?: string;
   mode?: StudioMode;
   createdAt?: string;
+  /** JPG of the finished frame that goes with a GIF, for inboxes that only show the first frame or block GIFs. */
+  still?: { blob: Blob; url: string; filename: string; publicUrl?: string };
+  /** What the encoder did to this file, e.g. a re-encode to stay under the size target. */
+  note?: string;
 };
 
 export type SavedCampaign = {
