@@ -8,7 +8,7 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
+} from "@/components/ui/form";
 
 import {
   Select,
@@ -16,7 +16,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/carousel/components/ui/select";
+} from "@/components/ui/select";
 import { fontsMap } from "@/carousel/lib/fonts-map";
 import { DocumentFormReturn } from "@/carousel/lib/document-form-types";
 

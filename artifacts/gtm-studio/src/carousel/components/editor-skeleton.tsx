@@ -3,8 +3,8 @@ import {
   CardContent,
   CardFooter,
   CardHeader,
-} from "@/carousel/components/ui/card";
-import { Skeleton } from "@/carousel/components/ui/skeleton";
+} from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SIZE } from "@/carousel/lib/page-size";
 import { cn } from "@/carousel/lib/utils";
 

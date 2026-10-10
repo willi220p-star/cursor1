@@ -26,7 +26,7 @@ export function useRetrieveFormValues<T, DocumentSchema>(
           return safeParseResult.data as T;
         } else {
           console.error(safeParseResult.error);
-          localStorage.clear();
+          localStorage.removeItem(localStorageKey);
           return defaultValues;
         }
       } catch (err) {

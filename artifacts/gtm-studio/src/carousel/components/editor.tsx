@@ -1,29 +1,26 @@
-"use client";
-
+import React from "react";
 import { SidebarPanel } from "@/carousel/components/settings-panel";
 import { SlidesEditor } from "@/carousel/components/slides-editor";
-import React from "react";
-import { useComponentPrinter } from "@/carousel/lib/hooks/use-component-printer";
-
+import { CarouselHeader } from "@/carousel/components/carousel-header";
 import { RefProvider } from "@/carousel/lib/providers/reference-context";
-import { MainNav } from "./main-nav";
+import { StudioProvider } from "@/carousel/lib/providers/studio-context";
 
 export default function Editor({ userId }: { userId?: string }) {
-  const { componentRef, handlePrint, isPrinting } = useComponentPrinter();
+  const componentRef = React.useRef<HTMLDivElement>(null);
 
   return (
-    <RefProvider myRef={componentRef}>
-      <div className="flex-1 flex flex-col">
-        <MainNav
-          className="h-14 border-b px-6 "
-          handlePrint={handlePrint}
-          isPrinting={isPrinting}
-        />
-        <div className="flex-1 flex flex-start  md:grid md:grid-cols-[320px_minmax(0,1fr)] ">
-          <SidebarPanel userId={userId} />
-          <SlidesEditor />
+    <StudioProvider userId={userId}>
+      <RefProvider myRef={componentRef}>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="carousel-toolbar px-4 pb-3 pt-5 md:px-8 md:pt-8">
+            <CarouselHeader />
+          </div>
+          <div className="carousel-workspace flex min-w-0 flex-1 flex-col border-t border-border md:grid md:grid-cols-[360px_minmax(0,1fr)]">
+            <SidebarPanel userId={userId} />
+            <SlidesEditor />
+          </div>
         </div>
-      </div>
-    </RefProvider>
+      </RefProvider>
+    </StudioProvider>
   );
 }

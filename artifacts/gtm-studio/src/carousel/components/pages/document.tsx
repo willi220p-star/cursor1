@@ -2,7 +2,7 @@
 import * as z from "zod";
 import React, { useEffect } from "react";
 import { DocumentSchema } from "@/carousel/lib/validation/document-schema";
-import { SIZE } from "@/carousel/lib/page-size";
+import { getPageSize } from "@/carousel/lib/page-size";
 import { usePagerContext } from "@/carousel/lib/providers/pager-context";
 import { cn } from "@/carousel/lib/utils";
 import { NewPage } from "@/carousel/components/pages/new-page";
@@ -25,7 +25,7 @@ import {
   CarouselItem,
   CarouselNext,
   CarouselPrevious,
-} from "@/carousel/components/ui/carousel";
+} from "@/components/ui/carousel";
 
 export function Document({
   document,
@@ -37,6 +37,7 @@ export function Document({
   scale: number;
 }) {
   const docReference = useRefContext();
+  const SIZE = getPageSize(document.config.format);
   const [api, setApi] = React.useState<CarouselApi>();
 
   const { currentPage } = usePagerContext();

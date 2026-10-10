@@ -36,6 +36,7 @@ export const defaultValues = {
     pageNumber: {
       showNumbers: true,
     },
+    format: "portrait" as const,
   },
   filename: "My Carousel File",
 };

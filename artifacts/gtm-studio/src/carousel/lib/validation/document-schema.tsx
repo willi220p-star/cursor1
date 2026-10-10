@@ -4,12 +4,14 @@ import { ThemeSchema } from "./theme-schema";
 import { BrandSchema } from "./brand-schema";
 import { FontsSchema } from "./fonts-schema";
 import { PageNumberSchema } from "./page-number-schema";
+import { PageFormat } from "@/carousel/lib/page-size";
 
 export const ConfigSchema = z.object({
   brand: BrandSchema,
   theme: ThemeSchema,
   fonts: FontsSchema,
   pageNumber: PageNumberSchema,
+  format: PageFormat.default("portrait"),
 });
 
 export const DocumentSchema = z.object({

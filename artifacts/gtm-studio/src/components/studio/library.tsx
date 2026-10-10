@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ArrowUpDown, Copy, Database, FileText, Folder, FolderInput, FolderPlus, History, MoreHorizontal, Pencil, Search, Tag, Trash2 } from 'lucide-react';
-import { Link } from 'wouter';
+import { Link, useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -139,6 +139,7 @@ export function Library({
   onChangedRef.current = onChanged;
   const userIdRef = useRef(userId);
   userIdRef.current = userId;
+  const [, navigate] = useLocation();
 
   const [loadFailed, setLoadFailed] = useState<string[]>([]);
   const load = () => {
@@ -381,6 +382,11 @@ export function Library({
   };
 
   const openFile = (file: StoredFile) => {
+    // Saved carousels are JSON decks; open them in the carousel editor rather than as raw files.
+    if (file.label === 'Carousel' && file.storagePath) {
+      navigate(`/carousel?open=${encodeURIComponent(file.storagePath)}`);
+      return;
+    }
     if (!file.publicUrl) {
       toast.error(`${file.filename} has no Supabase link.`);
       return;

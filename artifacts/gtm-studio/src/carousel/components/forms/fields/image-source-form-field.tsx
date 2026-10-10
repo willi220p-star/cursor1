@@ -4,15 +4,15 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
-import { Input } from "@/carousel/components/ui/input";
+} from "@/components/ui/form";
+import { Input } from "@/components/ui/input";
 import { convertFileToDataUrl } from "@/carousel/lib/convert-file";
 import {
   DocumentFormReturn,
   ImageSourceFieldPath,
 } from "@/carousel/lib/document-form-types";
 import imageCompression from "browser-image-compression";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ImageInputType } from "@/carousel/lib/validation/image-schema";
 import { useEffect, useState } from "react";
 

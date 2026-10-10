@@ -576,6 +576,7 @@ function storedFileLabel(metadata: { kind?: string; role?: string } | null, file
   if (kind === 'paper') return 'Paper photo';
   if (kind === 'signature') return 'Signature';
   if (kind === 'gif') return 'GIF';
+  if (kind === 'carousel') return 'Carousel';
   if (metadata?.role === 'generated') return 'Generated image';
   if (/\.(csv|xlsx|xls|ods|tsv|txt)$/i.test(filename)) return 'Imported list';
   return 'File';
@@ -1115,4 +1116,77 @@ export async function uploadGeneratedAssets(
     results.push({ ...asset, publicUrl: data.publicUrl, uploadStatus: 'uploaded', status: 'uploaded' });
   }
   return results;
+}
+
+// Carousel decks ---------------------------------------------------------------------------------
+// The campaign and template tables only accept studio modes, so each carousel is a JSON text file
+// in the asset bucket with an outbound_assets row tagged { kind: 'carousel' } for listing.
+
+export type CarouselFileRow = { id: string; title: string; savedAt: string; storagePath: string };
+
+function carouselRowTitle(metadata: { title?: unknown } | null, filename: string) {
+  const fromName = filename.replace(/\.json$/i, '').trim();
+  return fromName || (typeof metadata?.title === 'string' ? metadata.title : '') || 'Untitled carousel';
+}
+
+export async function saveCarouselFile(
+  body: string,
+  meta: { id: string; title: string; savedAt: string; filename: string; storagePath: string },
+  userId: string,
+) {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  if (!meta.storagePath.startsWith(`${userId}/carousels/`)) throw new Error('That carousel is outside your Supabase folder.');
+  const blob = new Blob([body], { type: 'text/plain' });
+  const { error } = await supabase.storage.from(ASSET_BUCKET).upload(meta.storagePath, blob, {
+    contentType: 'text/plain',
+    upsert: true,
+  });
+  if (error) throw error;
+  const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(meta.storagePath);
+  const record = {
+    filename: meta.filename,
+    public_url: data.publicUrl,
+    content_type: 'text/plain',
+    bytes: blob.size,
+    contact_key: 'carousel',
+    metadata: { kind: 'carousel', role: 'carousel', mode: 'carousel', title: meta.title, carouselId: meta.id, savedAt: meta.savedAt },
+  };
+  const existing = await supabase.from('outbound_assets').select('id').eq('user_id', userId).eq('storage_path', meta.storagePath).limit(1);
+  if (existing.error) throw existing.error;
+  const rowId = (existing.data as Array<{ id: string }> | null)?.[0]?.id;
+  const written = rowId
+    ? await supabase.from('outbound_assets').update(record).eq('id', rowId).eq('user_id', userId)
+    : await supabase.from('outbound_assets').insert({ ...record, user_id: userId, campaign_id: null, storage_path: meta.storagePath });
+  if (written.error) throw written.error;
+  return { storagePath: meta.storagePath, publicUrl: data.publicUrl };
+}
+
+export async function listCarouselFiles(userId?: string): Promise<CarouselFileRow[]> {
+  if (!supabase || !userId) return [];
+  const { data, error } = await supabase
+    .from('outbound_assets')
+    .select('id,filename,storage_path,metadata,created_at')
+    .eq('user_id', userId)
+    .eq('metadata->>kind', 'carousel')
+    .order('created_at', { ascending: false })
+    .limit(200);
+  if (error) throw error;
+  return (data ?? []).map((row) => {
+    const metadata = (row.metadata ?? null) as { title?: unknown; savedAt?: unknown; carouselId?: unknown } | null;
+    const fromPath = /\/carousels\/([a-z0-9-]+)\.json$/i.exec(String(row.storage_path))?.[1];
+    return {
+      id: typeof metadata?.carouselId === 'string' ? metadata.carouselId : fromPath || row.id,
+      title: carouselRowTitle(metadata, String(row.filename ?? '')),
+      savedAt: typeof metadata?.savedAt === 'string' ? metadata.savedAt : row.created_at,
+      storagePath: row.storage_path,
+    };
+  });
+}
+
+export async function loadCarouselFile(storagePath: string, userId?: string) {
+  if (!supabase || !userId) throw new Error('Sign in to open carousels saved in Supabase.');
+  if (!storagePath.startsWith(`${userId}/carousels/`)) throw new Error('That carousel is outside your Supabase folder.');
+  const { data, error } = await supabase.storage.from(ASSET_BUCKET).download(storagePath);
+  if (error) throw error;
+  return data.text();
 }
