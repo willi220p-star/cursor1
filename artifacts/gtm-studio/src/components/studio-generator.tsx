@@ -64,7 +64,7 @@ import {
   dimensions,
   isLiveGif,
   modeLabel,
-  renderGifAsset,
+  renderGifWithStill,
   renderPreview,
   renderStaticAsset,
   resolveAvatarSource,
@@ -75,6 +75,7 @@ import {
   usesPhotoMotion,
   usesTextAnim,
 } from '@/studio/renderer';
+import { gifEstimateFor, gifStillFilename } from '@/studio/gif-plan';
 import {
   appendCampaignHistory,
   copyTemplateConfig,
@@ -1467,20 +1468,25 @@ export function StudioGenerator({
   const renderOne = async (current: Contact, signal?: AbortSignal, lane = 0) => {
     const extension = exportExtension(mode, config);
     const forRow = configForRow(config, current);
-    const blob = exportIsAnimated(mode, config)
-      ? await renderGifAsset(forRow, current, signal)
+    const filename = safeFilename(config.filename, current, extension);
+    // A GIF also gets a JPG of its finished frame, for inboxes that only show the first frame or block GIFs.
+    const gif = exportIsAnimated(mode, config) ? await renderGifWithStill(forRow, current, { signal, still: true }) : null;
+    const blob = gif
+      ? gif.blob
       : mode === 'handwritten' || mode === 'avatar'
         ? await renderStaticAsset(forRow, current)
         : await staticWorker(lane).render(forRow, current);
     return {
       id: crypto.randomUUID(),
       row: current.row,
-      filename: safeFilename(config.filename, current, extension),
+      filename,
       blob,
       url: URL.createObjectURL(blob),
       bytes: blob.size,
       selected: true,
       status: blob.size > 200_000 ? 'warning' : 'ready',
+      ...(gif?.still ? { still: { blob: gif.still, url: URL.createObjectURL(gif.still), filename: gifStillFilename(filename) } } : {}),
+      ...(gif?.note ? { note: gif.note } : {}),
     } as GeneratedAsset;
   };
 
@@ -1490,7 +1496,7 @@ export function StudioGenerator({
     cancelRef.current = false;
     const controller = new AbortController();
     batchControllerRef.current = controller;
-    if (!keep.length) assets.forEach((asset) => URL.revokeObjectURL(asset.url));
+    if (!keep.length) assets.forEach((asset) => { URL.revokeObjectURL(asset.url); if (asset.still?.url) URL.revokeObjectURL(asset.still.url); });
     const batchContacts = contacts.slice(0, 400);
     const keptRows = new Set(keep.map((asset) => asset.row));
     const todo = batchContacts.filter((contact) => !keptRows.has(contact.row));
@@ -1713,7 +1719,10 @@ export function StudioGenerator({
     }
     const zip = new JSZip();
     const packed = await Promise.all(selected.map((asset) => ensureAssetBlob(asset)));
-    packed.forEach((asset) => zip.file(asset.filename, asset.blob));
+    packed.forEach((asset) => {
+      zip.file(asset.filename, asset.blob);
+      if (asset.still?.blob.size) zip.file(asset.still.filename, asset.still.blob);
+    });
     const stamped = stampStudioOutputs(list, packed, mode, config);
     const exported = exportListCsv(stamped, config, mode);
     zip.file('prospects.csv', exported.csv);
@@ -1724,6 +1733,7 @@ export function StudioGenerator({
       bytes: asset.bytes,
       image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.image_url ?? ''),
       smartlead_image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.smartlead_image_url ?? ''),
+      ...(asset.still ? { still_filename: asset.still.filename, still_url: asset.still.publicUrl ?? asset.still.filename } : {}),
     }));
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
     saveAs(await zip.generateAsync({ type: 'blob' }), `${config.campaignName.replace(/\W+/g, '-') || 'campaign'}.zip`);
@@ -1911,7 +1921,14 @@ export function StudioGenerator({
           ? config.photoMotion
           : config.animation;
   const canvasDims = dimensions[config.channel];
-  const gifEstimateKb = Math.round(canvasDims.width * canvasDims.height * (config.gifFrames?.length ?? 12) * (.006 + config.gifQuality * .001) / 1024);
+  const gifEstimate = gifEstimateFor(config);
+  // Estimate plus the size target, shown under each GIF encoding section.
+  const gifSizeFooter = (
+    <>
+      <p className="mono text-sm text-muted-foreground">Estimate: ~{gifEstimate.kb} KB · {gifEstimate.frames} frames · {gifEstimate.width} × {gifEstimate.height}</p>
+      <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.gifKeepUnder1Mb !== false} onCheckedChange={(value) => updateConfig('gifKeepUnder1Mb', value === true)} /> Keep under 1 MB</label>
+    </>
+  );
   const copyLines = config.copy.split('\n').length;
   const templatesForMode = savedTemplates.filter((item) => item.mode === mode);
   const batchSize = Math.min(contacts.length, 400);
@@ -2459,6 +2476,7 @@ export function StudioGenerator({
                   <select id="handgif-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
+              {gifSizeFooter}
             </Section>
           )}
         </>
@@ -2617,6 +2635,7 @@ export function StudioGenerator({
                   <select id="avatar-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
+              {gifSizeFooter}
             </Section>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -2647,7 +2666,7 @@ export function StudioGenerator({
                   <select id="gif-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
-              <p className="mono text-sm text-muted-foreground">Estimate: {gifEstimateKb} KB · {config.gifFrames?.length ?? 12} frames</p>
+              {gifSizeFooter}
             </Section>
           )}
           </>

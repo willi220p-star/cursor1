@@ -130,7 +130,7 @@ export function planRegeneration(
   assets: GeneratedAsset[],
   config: StudioConfig,
   mode: StudioMode,
-  columns: { file: string; url: string; status: string; hash?: string },
+  columns: { file: string; url: string; status: string; hash?: string; still?: string },
 ): RegenerationPlan {
   if (!columns.hash) return { total: rows.length, changed: rows.length, keep: [] };
   const byRow = new Map<number, GeneratedAsset>();
@@ -153,7 +153,13 @@ export function planRegeneration(
       continue;
     }
     if (!isHttpUrl(url)) continue;
+    // A kept GIF row keeps its uploaded still, so re-stamping doesn't blank <prefix>_still_url.
+    const stillUrl = columns.still ? String(contact[columns.still] ?? '') : '';
+    const still = isHttpUrl(stillUrl)
+      ? { blob: new Blob(), url: stillUrl, filename: stillUrl.split('/').pop()?.split('?')[0] || `row-${contact.row}-still.jpg`, publicUrl: stillUrl }
+      : undefined;
     keep.push({
+      ...(still ? { still } : {}),
       id: `kept-${contact.row}-${hashString(url)}`,
       row: contact.row,
       filename: file || url.split('/').pop()?.split('?')[0] || `row-${contact.row}`,

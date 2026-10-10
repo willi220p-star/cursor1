@@ -212,6 +212,22 @@ describe('regeneration plan', () => {
     ]);
   });
 
+  it('keeps a GIF row\'s still link when the row is reused after a reload', () => {
+    const gifConfig = defaultConfig('gif');
+    const gifCols = outputColumnsFor('gif');
+    expect(gifCols.still).toBeTruthy();
+    const gifAssets = people.map((person) => ({
+      ...asset(person.row, `https://cdn.test/row-${person.row}.gif`),
+      filename: `row-${person.row}.gif`,
+      still: { blob: new Blob(['s']), url: `blob:s${person.row}`, filename: `row-${person.row}-still.jpg`, publicUrl: `https://cdn.test/row-${person.row}-still.jpg` },
+    }));
+    const stamped = stampStudioOutputs(people, gifAssets, 'gif', gifConfig);
+    const plan = planRegeneration(stamped, [], gifConfig, 'gif', gifCols);
+    expect(plan.changed).toBe(0);
+    const restamped = stampStudioOutputs(stamped, plan.keep, 'gif', gifConfig);
+    expect(restamped.map((row) => row[gifCols.still!])).toEqual(people.map((person) => `https://cdn.test/row-${person.row}-still.jpg`));
+  });
+
   it('renders everything when the look changes, and local-only files need the blob', () => {
     const generated = people.map((person) => asset(person.row));
     const stamped = stampStudioOutputs(people, generated, 'memes', config);

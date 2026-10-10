@@ -17,9 +17,11 @@ export type StudioOutputColumns = {
   /** A/B copy split and the opener behind the copy. Only studios that write a message have them. */
   variant?: string;
   opener?: string;
+  /** Link to the JPG of the GIF's finished frame. Only studios that can export a GIF have it. */
+  still?: string;
 };
 
-function columnsWithPrefix(prefix: string, split: boolean): StudioOutputColumns {
+function columnsWithPrefix(prefix: string, split: boolean, gif = true): StudioOutputColumns {
   return {
     file: `${prefix}_file`,
     url: `${prefix}_url`,
@@ -27,11 +29,12 @@ function columnsWithPrefix(prefix: string, split: boolean): StudioOutputColumns 
     alt: `${prefix}_alt`,
     hash: `${prefix}_hash`,
     ...(split ? { variant: `${prefix}_variant`, opener: `${prefix}_opener` } : {}),
+    ...(gif ? { still: `${prefix}_still_url` } : {}),
   };
 }
 
 const OUTPUT_COLUMNS: Record<StudioMode, StudioOutputColumns> = {
-  handwritten: columnsWithPrefix('handwritten', true),
+  handwritten: columnsWithPrefix('handwritten', true, false),
   avatar: columnsWithPrefix('avatar_card', true),
   memes: columnsWithPrefix('meme', false),
   gif: columnsWithPrefix('gif', false),
@@ -91,7 +94,7 @@ export function outputColumnsFor(mode: StudioMode): StudioOutputColumns {
 
 export function outputColumnNames(mode: StudioMode) {
   const cols = outputColumnsFor(mode);
-  return [cols.file, cols.url, cols.status, cols.alt, cols.hash, ...(cols.variant ? [cols.variant] : []), ...(cols.opener ? [cols.opener] : []), 'image_url', 'smartlead_image_url'];
+  return [cols.file, cols.url, cols.status, cols.alt, cols.hash, ...(cols.variant ? [cols.variant] : []), ...(cols.opener ? [cols.opener] : []), ...(cols.still ? [cols.still] : []), 'image_url', 'smartlead_image_url'];
 }
 
 export function persistListMeta(scope: string, modes: StudioMode[], meta: ListMeta) {
@@ -189,6 +192,7 @@ export function stampStudioOutputs(rows: Contact[], assets: GeneratedAsset[], mo
       if (cols.opener && isPaperDesk(mode)) extra[cols.opener] = openerFor(config, row);
       extra[cols.hash] = failed ? '' : rowRenderHash(config, row, mode);
     }
+    if (cols.still) extra[cols.still] = failed || !asset.still ? '' : (asset.still.publicUrl?.trim() || asset.still.filename);
     return {
       ...row,
       ...extra,
