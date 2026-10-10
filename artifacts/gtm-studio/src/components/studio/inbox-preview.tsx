@@ -46,8 +46,8 @@ function fitFacts(kind: TextKind | null, config: StudioConfig, noteFit: NoteFitI
       ? { usedSize: noteFit.fontSize, chosenSize: config.fontSize, needed: noteFit.needed, available: noteFit.available, words, fontScale: noteFit.fontScale }
       : { usedSize: config.fontSize, chosenSize: config.fontSize, words };
   }
-  // Avatar cards never draw typed text below 14 px on the canvas.
-  if (kind === 'typed') return { usedSize: Math.max(14, config.fontSize), chosenSize: config.fontSize };
+  // Avatar cards: the size the letter is drawn at after fitting its text frame.
+  if (kind === 'typed') return { usedSize: noteFit?.fontSize ?? config.fontSize, chosenSize: config.fontSize, words };
   return null;
 }
 

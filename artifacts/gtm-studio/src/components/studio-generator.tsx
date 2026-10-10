@@ -33,7 +33,7 @@ import {
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { useLocation } from 'wouter';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -99,6 +99,7 @@ import { FirstTouchNote } from '@/components/studio/first-touch-note';
 import { configForRow, rowVariant } from '@/studio/variants';
 import { HookControls } from '@/components/studio/hook-controls';
 import { AudiencePicker } from '@/components/studio/audience-picker';
+import { AvatarRowChecks } from '@/components/studio/avatar-row-checks';
 import { wordTargetFor } from '@/studio/audience';
 import {
   contactsStorageKey,
@@ -112,6 +113,8 @@ import {
   AVATAR_CACHE_FIELD,
   AVATAR_SOURCE_FIELD,
   avatarInNoteLayout,
+  avatarLayoutOf,
+  defaultAvatarLayout,
   canvasSizes,
   clampZoneInside,
   cropLayerStyle,
@@ -139,6 +142,7 @@ import {
   textAnims,
   textMotions,
   typedFonts,
+  type AvatarLayout,
   type AvatarShape,
   type CanvasSize,
   type Contact,
@@ -457,15 +461,18 @@ export function StudioGenerator({
   );
   const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
   useEffect(() => {
-    if (mode !== 'handwritten' && mode !== 'handgif') return;
+    if (mode !== 'handwritten' && mode !== 'handgif' && mode !== 'avatar') return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void measureNoteFit(config, contact).then((fit) => { if (!cancelled) setNoteFit(fit); }).catch(() => undefined);
+      void measureNoteFit(rowConfig, contact).then((fit) => { if (!cancelled) setNoteFit(fit); }).catch(() => undefined);
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [config, contact, mode]);
-  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
-  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit, wordTargetFor(config));
+  }, [rowConfig, contact, mode]);
+  // Avatar cards also type the personal line from the message column.
+  const typedMessage = mode === 'avatar' && config.showMessage !== false ? ` ${resolveMessage(config, contact)}` : '';
+  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)}${typedMessage} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
+  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit, wordTargetFor(config), mode === 'avatar' ? 'typed' : 'handwritten');
+  const configFor = useCallback((row: Contact) => configForRow(config, row), [config]);
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
   const animatedExport = exportIsAnimated(mode, config);
@@ -1296,7 +1303,7 @@ export function StudioGenerator({
     setConfig((current) => {
       const note = cardZone(finish, current.cardFill);
       if (mode === 'avatar') {
-        const layout = avatarInNoteLayout(current.channel, current.avatarZone.width, note);
+        const layout = avatarInNoteLayout(current.channel, current.avatarZone.width, note, avatarLayoutOf(current));
         return { ...current, finish, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text };
       }
       return { ...current, finish, noteZone: note };
@@ -2147,7 +2154,7 @@ export function StudioGenerator({
             <input id="postscript" className="field" value={config.postscript} onChange={(event) => updateConfig('postscript', event.target.value)} placeholder="P.S. {company} caught my attention." />
           </FieldRow>
           <VariantBControls config={config} contact={contact} mergeOptions={mergeOptions} onChange={(next) => updateConfig('copyVariantB', next)} />
-          <p className="helper">{mode === 'handgif' ? 'A photographed hand writes this note. Download and Generate are GIFs.' : avatarMode ? ((config.textMotion ?? 'still') === 'still' ? 'Still portrait card. Download is a PNG. Choose Auto writing if you want the letter to type in.' : 'Portrait stays. The letter animates. Download is a GIF.') : 'This studio exports a still page. Use Handwriting GIF if you want the writing hand.'}</p>
+          <p className="helper">{mode === 'handgif' ? 'A photographed hand writes this note. Download and Generate are GIFs.' : avatarMode ? ((config.textMotion ?? 'still') === 'still' ? `Still portrait card. Download is a ${stillFormatFor(config).toUpperCase()}. Choose Auto writing if you want the letter to type in.` : 'Portrait stays. The letter animates. Download is a GIF.') : 'This studio exports a still page. Use Handwriting GIF if you want the writing hand.'}</p>
         </Section>
       ) : (
         <Section title="Text layers" hint="Each layer is a movable block on the image. Drag it on the stage or use the Look tab.">
@@ -2227,6 +2234,7 @@ export function StudioGenerator({
             </ul>
           </div>
         )}
+        {avatarMode && <AvatarRowChecks config={config} contacts={contacts} configFor={configFor} onSelectRow={setSelectedRow} />}
       </Section>
     </div>
   );
@@ -2249,8 +2257,10 @@ export function StudioGenerator({
               onChange={(event) => {
                 const channel = event.target.value as CanvasSize;
                 if (mode === 'avatar') {
-                  const layout = avatarInNoteLayout(channel, config.avatarZone.width, config.noteZone);
-                  setConfig((current) => ({ ...current, channel, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text }));
+                  // Tall and square canvases stack the portrait over the letter; wide ones keep it beside.
+                  const avatarLayout = defaultAvatarLayout(channel);
+                  const layout = avatarInNoteLayout(channel, config.avatarZone.width, config.noteZone, avatarLayout);
+                  setConfig((current) => ({ ...current, channel, avatarLayout, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text }));
                 } else {
                   updateConfig('channel', channel);
                 }
@@ -2292,10 +2302,27 @@ export function StudioGenerator({
             max={36}
             value={Math.round(config.avatarZone.width * 100)}
             onChange={(value) => {
-              const layout = avatarInNoteLayout(config.channel, value / 100, config.noteZone);
+              const layout = avatarInNoteLayout(config.channel, value / 100, config.noteZone, avatarLayoutOf(config));
               setConfig((current) => ({ ...current, avatarZone: layout.avatar, textZone: layout.text }));
             }}
           />
+          <FieldRow label="Portrait position" hint="On top gives the letter the full width of the paper, so the type stays big on a phone.">
+            <ToggleGroup
+              type="single"
+              value={avatarLayoutOf(config)}
+              onValueChange={(value) => {
+                if (!value) return;
+                const avatarLayout = value as AvatarLayout;
+                const layout = avatarInNoteLayout(config.channel, config.avatarZone.width, config.noteZone, avatarLayout);
+                setConfig((current) => ({ ...current, avatarLayout, avatarZone: layout.avatar, textZone: layout.text }));
+              }}
+              className="grid grid-cols-2 gap-2"
+              aria-label="Portrait position"
+            >
+              <ToggleGroupItem value="stacked" className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">On top</ToggleGroupItem>
+              <ToggleGroupItem value="side" className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">Left</ToggleGroupItem>
+            </ToggleGroup>
+          </FieldRow>
           <FieldRow label="Avatar shape">
             <ToggleGroup type="single" value={config.avatarShape ?? 'circle'} onValueChange={(value) => value && updateConfig('avatarShape', value as AvatarShape)} className="grid grid-cols-3 gap-2" aria-label="Avatar shape">
               {(['circle', 'rounded', 'square'] as AvatarShape[]).map((shape) => (
@@ -2391,6 +2418,8 @@ export function StudioGenerator({
           )}
         </>
       ) : avatarMode ? (
+        <>
+        <AudiencePicker config={config} setConfig={setConfig} />
         <Section title="Letter and paper">
           <FieldRow id="typed-font" label="Typeface" hint="The portrait sits on the paper. Drag the Text frame to place the letter — it is typed, not handwritten.">
             <select id="typed-font" className="field" value={config.fontFamily} onChange={(event) => updateConfig('fontFamily', event.target.value)}>
@@ -2404,7 +2433,7 @@ export function StudioGenerator({
             <ColorField id="ink-color" label="Ink" value={config.inkColor} onChange={(value) => updateConfig('inkColor', value)} />
           </div>
           {paperColorPicker}
-          <FieldRow label="Letter motion" hint={(config.textMotion ?? 'still') === 'still' ? 'Still letter. Download is a PNG.' : 'Portrait stays. The letter animates. Download is a GIF.'}>
+          <FieldRow label="Letter motion" hint={(config.textMotion ?? 'still') === 'still' ? `Still letter. Download is a ${stillFormatFor(config).toUpperCase()}.` : 'Portrait stays. The letter animates. Download is a GIF.'}>
             <ToggleGroup type="single" value={config.textMotion ?? 'type'} onValueChange={(value) => value && updateConfig('textMotion', value as TextMotion)} className="grid grid-cols-2 gap-2" aria-label="Avatar letter motion">
               {textMotions.map((motion) => (
                 <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{motion.label}</ToggleGroupItem>
@@ -2437,6 +2466,7 @@ export function StudioGenerator({
             }}
           />
         </Section>
+        </>
       ) : (
         <>
           <Section title="Motion" hint={usesMotion(config) ? `${memeMotions.find((item) => item.id === config.animation)?.hint ?? 'Animated'}. Download this row or Generate exports a GIF.` : 'Still frame — exports a PNG.'}>

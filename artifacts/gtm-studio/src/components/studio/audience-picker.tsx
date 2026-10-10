@@ -1,11 +1,11 @@
 import { Section } from '@/components/studio/shared';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { applyAudience, audiencePreset, audiencePresets, matchAudience, RECOMMENDED_AUDIENCE, type AudienceId } from '@/studio/audience';
+import { applyAudience, audiencePreset, audiencePresetsFor, matchAudience, RECOMMENDED_AUDIENCE, type AudienceId } from '@/studio/audience';
 import type { StudioConfig } from '@/studio/types';
 
 /**
- * "Made for": one click sets canvas, card framing and writing size for where the note gets read.
- * Shows "Custom" once size, canvas or framing has been changed by hand.
+ * "Made for": one click sets canvas, card framing and writing size for where the note gets read
+ * (avatar cards: also where the portrait sits). Shows "Custom" once those have been changed by hand.
  */
 export function AudiencePicker({
   config,
@@ -15,9 +15,12 @@ export function AudiencePicker({
   setConfig: (update: (current: StudioConfig) => StudioConfig) => void;
 }) {
   const active = matchAudience(config);
+  const avatar = config.mode === 'avatar';
   const hint = active
-    ? audiencePreset(active).hint
-    : 'Custom: size, canvas or framing changed by hand. Pick one to reset all three.';
+    ? audiencePreset(active, config.mode).hint
+    : avatar
+      ? 'Custom: type size, canvas, framing or portrait position changed by hand. Pick one to reset them.'
+      : 'Custom: size, canvas or framing changed by hand. Pick one to reset all three.';
   return (
     <Section title="Made for">
       <ToggleGroup
@@ -27,7 +30,7 @@ export function AudiencePicker({
         className="grid grid-cols-3 items-stretch gap-2"
         aria-label="Made for"
       >
-        {audiencePresets.map((preset) => (
+        {audiencePresetsFor(config.mode).map((preset) => (
           <ToggleGroupItem
             key={preset.id}
             value={preset.id}
@@ -41,7 +44,7 @@ export function AudiencePicker({
       </ToggleGroup>
       <p className="helper mt-2" aria-live="polite">
         {hint}
-        {active !== RECOMMENDED_AUDIENCE && ` ${audiencePreset(RECOMMENDED_AUDIENCE).label} is recommended for cold email.`}
+        {active !== RECOMMENDED_AUDIENCE && ` ${audiencePreset(RECOMMENDED_AUDIENCE, config.mode).label} is recommended for cold email.`}
       </p>
     </Section>
   );
