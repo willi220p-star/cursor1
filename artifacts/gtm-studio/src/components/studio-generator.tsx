@@ -76,6 +76,7 @@ import {
   usesTextAnim,
 } from '@/studio/renderer';
 import {
+  appendCampaignHistory,
   copyTemplateConfig,
   ensureAssetBlob,
   listStudioAssets,
@@ -97,6 +98,8 @@ import { OpenerLibrary } from '@/components/studio/opener-library';
 import { VariantBControls } from '@/components/studio/variant-b-controls';
 import { FirstTouchNote } from '@/components/studio/first-touch-note';
 import { configForRow, rowVariant } from '@/studio/variants';
+import { pushHistory } from '@/studio/campaign-status';
+import { planRegeneration, type RegenerationPlan } from '@/studio/row-hash';
 import { HookControls } from '@/components/studio/hook-controls';
 import { AudiencePicker } from '@/components/studio/audience-picker';
 import { wordTargetFor } from '@/studio/audience';
@@ -397,6 +400,7 @@ export function StudioGenerator({
   const [activeCanvasZone, setActiveCanvasZone] = useState<ZoneKind>('note');
   const [cropMode, setCropMode] = useState<'off' | 'image' | 'avatar'>('off');
   const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [regenPlan, setRegenPlan] = useState<RegenerationPlan | null>(null);
   const [progress, setProgress] = useState(0);
   const [progressDone, setProgressDone] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
@@ -1543,7 +1547,8 @@ export function StudioGenerator({
       toast.success(`${generated.length} assets ready for review${contacts.length > 400 ? ' (first 400 rows)' : ''}`);
     }
     try {
-      const stamped = await writeBackOutputs(generated);
+      const made = generated.filter((asset) => asset.status !== 'failed').length;
+      const stamped = await writeBackOutputs(generated, contacts, false, made ? [{ kind: 'generated', rows: made }] : []);
       if (!cancelRef.current && generated.some((asset) => asset.status !== 'failed')) setReviewOpen(true);
       return { generated, contacts: stamped };
     } finally {
@@ -1551,9 +1556,15 @@ export function StudioGenerator({
     }
   };
 
-  const writeBackOutputs = async (generated: GeneratedAsset[], rows = contacts, quiet = false) => {
+  const writeBackOutputs = async (
+    generated: GeneratedAsset[],
+    rows = contacts,
+    quiet = false,
+    events: Array<{ kind: 'generated' | 'uploaded' | 'exported'; rows: number }> = [],
+  ) => {
     if (!generated.length) return rows;
     let nextAssets = generated;
+    let uploadedCount = 0;
     const uploadable = generated.filter((asset) => asset.status !== 'failed' && asset.blob.size && !asset.publicUrl);
     if (userId && supabaseConfigured && uploadable.length) {
       try {
@@ -1569,6 +1580,7 @@ export function StudioGenerator({
         const byId = new Map(uploaded.map((asset) => [asset.id, asset]));
         nextAssets = generated.map((asset) => byId.get(asset.id) ?? asset);
         const failedUploads = uploaded.filter((asset) => asset.uploadStatus === 'failed').length;
+        uploadedCount = uploaded.length - failedUploads;
         if (failedUploads) {
           toast(`${failedUploads} files stayed local`, { description: 'Filenames are on the list. Retry Save if the upload failed.' });
         }
@@ -1585,7 +1597,11 @@ export function StudioGenerator({
       return extras.length ? [...merged, ...extras] : merged;
     });
     const stamped = stampStudioOutputs(rows, nextAssets, mode, config);
-    const nextConfig = withOutputFieldMap(config, mode);
+    let history = config.history;
+    for (const event of [...events, ...(uploadedCount ? [{ kind: 'uploaded' as const, rows: uploadedCount }] : [])]) {
+      history = pushHistory(history, event);
+    }
+    const nextConfig = withOutputFieldMap(history === config.history ? config : { ...config, history }, mode);
     setContacts(stamped);
     persistContactList(contactsKey, stamped);
     persistListMeta(scope, [mode], {
@@ -1598,7 +1614,9 @@ export function StudioGenerator({
     setConfig(nextConfig);
     try {
       const saved = await saveCampaign(nextConfig, listExportColumns(stamped, nextConfig.sourceColumns, mode), stamped, userId);
-      if (saved.config.id !== config.id) setConfig((current) => ({ ...current, id: saved.config.id, fieldMap: nextConfig.fieldMap }));
+      if (saved.config.id !== config.id || history !== config.history) {
+        setConfig((current) => ({ ...current, id: saved.config.id, fieldMap: nextConfig.fieldMap, history: nextConfig.history }));
+      }
       if (saved.syncError) setError(`Assets are on the list locally, but cloud sync failed: ${saved.syncError}`);
       else if (!quiet) {
         const cols = outputColumnNames(mode).slice(0, 2).join(' and ');
@@ -1619,7 +1637,32 @@ export function StudioGenerator({
       terminateStaticWorkers();
       return;
     }
+    const batchContacts = contacts.slice(0, 400);
+    const plan = planRegeneration(batchContacts, assets, config, mode, outputColumnsFor(mode));
+    if (plan.keep.length && plan.total > 0) {
+      setRegenPlan(plan);
+      return;
+    }
     await renderBatch();
+  };
+
+  const regenerate = async (changedOnly: boolean) => {
+    const plan = regenPlan;
+    setRegenPlan(null);
+    if (!plan) return;
+    await renderBatch(changedOnly ? plan.keep : []);
+  };
+
+  /** Exports count toward the campaign's status, saved without a full campaign save. */
+  const recordCampaignExport = (rows: number) => {
+    if (!rows) return;
+    const event = { kind: 'exported' as const, rows, at: new Date().toISOString() };
+    setConfig((current) => ({ ...current, history: pushHistory(current.history, event) }));
+    if (config.id) {
+      void appendCampaignHistory(config.id, event, userId).then((result) => {
+        if (result.syncError) reportError(new Error(result.syncError), { area: 'campaign-history', mode });
+      });
+    }
   };
 
   const openBatchReview = async () => {
@@ -1678,6 +1721,7 @@ export function StudioGenerator({
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
     saveAs(await zip.generateAsync({ type: 'blob' }), `${config.campaignName.replace(/\W+/g, '-') || 'campaign'}.zip`);
     recordExport(scope, selected.length);
+    recordCampaignExport(selected.length);
     toast.success(`${selected.length} assets downloaded in a ZIP${label}`, {
       description: `${exported.filename} includes the generated file names and links.`,
     });
@@ -1723,6 +1767,7 @@ export function StudioGenerator({
     const exported = exportListCsv(contacts, config, mode);
     const blob = new Blob([exported.csv], { type: 'text/csv;charset=utf-8' });
     saveAs(blob, exported.filename);
+    recordCampaignExport(contacts.length);
     toast.success(`Downloaded ${exported.filename}`, {
       description: 'Original columns plus generated file names and links.',
     });
@@ -2621,7 +2666,7 @@ export function StudioGenerator({
         >
           <Images size={16} aria-hidden /> Review all images{assets.length ? ` (${assets.length})` : ''}
         </button>
-        <p className="helper">Opens every image stored in Supabase for this studio. Generate first if the cloud list is still empty.</p>
+        <p className="helper">Opens every image stored in Supabase for this campaign. Generate first if the cloud list is still empty.</p>
         <div className="grid grid-cols-2 gap-2">
           <button type="button" className="btn btn-quiet" onClick={downloadThisRow} disabled={downloading || generating} data-loading={downloading || undefined} aria-busy={downloading || undefined}><Download size={16} aria-hidden /> This row</button>
           <button type="button" className="btn btn-quiet" onClick={downloadAll} disabled={generating}><FileArchive size={16} aria-hidden /> All as ZIP</button>
@@ -2984,6 +3029,29 @@ export function StudioGenerator({
           </Sheet>
         </>
       )}
+
+      <Dialog open={regenPlan !== null} onOpenChange={(open) => { if (!open) setRegenPlan(null); }}>
+        <DialogContent className="rounded-[12px] border-border bg-card" data-testid="regenerate-dialog">
+          <DialogHeader>
+            <DialogTitle className="display text-2xl font-semibold">Regenerate this batch</DialogTitle>
+            <DialogDescription>
+              {regenPlan
+                ? regenPlan.changed
+                  ? `${regenPlan.total - regenPlan.changed} of ${regenPlan.total} rows have not changed since their file was made. Their files and links are kept.`
+                  : `None of the ${regenPlan.total} rows has changed since its file was made.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <button type="button" className="btn btn-primary" autoFocus onClick={() => void regenerate(true)}>
+              Regenerate changed rows only ({regenPlan?.changed ?? 0} of {regenPlan?.total ?? 0})
+            </button>
+            <button type="button" className="btn btn-quiet" onClick={() => void regenerate(false)}>
+              Regenerate all
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
         <DialogContent className="flex max-h-[92dvh] w-[min(1080px,calc(100vw-24px))] max-w-none flex-col gap-4 overflow-hidden rounded-[12px] border-border bg-card p-5 sm:max-w-none">

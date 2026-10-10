@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Command } from 'cmdk';
-import { FileText, Moon, Search, Settings2, Sun } from 'lucide-react';
+import { Copy, FileText, Moon, Search, Settings2, Sun } from 'lucide-react';
 import { useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { relativeTime } from '@/studio/activity';
-import { listCampaigns, listStoredFiles, listTemplateConfigs, type StoredFile } from '@/studio/cloud';
+import { LIBRARY_CHANGED_EVENT, relativeTime } from '@/studio/activity';
+import { campaignClient, campaignSearchText, campaignStatus, statusLabels } from '@/studio/campaign-status';
+import { duplicateCampaign, listCampaigns, listStoredFiles, listTemplateConfigs, type StoredFile } from '@/studio/cloud';
 import { openCampaignInStudio, openTemplateInStudio, studioInfo, studioInitial, studios } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate } from '@/studio/types';
 import { useTheme } from '@/lib/theme';
@@ -18,10 +19,17 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
   const { resolved, setPreference } = useTheme();
   const [data, setData] = useState<Loaded | null>(null);
   const [failed, setFailed] = useState(false);
+  const [search, setSearch] = useState('');
   const scope = userId ?? 'anonymous';
+  // Client and the list's company names are searchable too; built once per load and capped.
+  const campaignText = useMemo(
+    () => new Map((data?.campaigns ?? []).map((campaign) => [campaign.id, campaignSearchText(campaign, { maxRows: 100, maxChars: 600 })])),
+    [data],
+  );
 
   useEffect(() => {
     if (!open) return;
+    setSearch('');
     let alive = true;
     setFailed(false);
     const settle = <T,>(work: Promise<T[]>) => work.catch((error) => {
@@ -44,6 +52,23 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
     action();
   };
 
+  const duplicate = (campaign: SavedCampaign) => {
+    const taken = (data?.campaigns ?? []).map((item) => item.name);
+    void duplicateCampaign(campaign, userId, taken)
+      .then((result) => {
+        window.dispatchEvent(new Event(LIBRARY_CHANGED_EVENT));
+        if (result.syncError) toast.error(`Could not fully copy ${campaign.name}`, { description: result.syncError });
+        else if (result.campaign) {
+          const copy = result.campaign;
+          toast.success(`Copied as ${copy.name}`, { action: { label: 'Open', onClick: () => openCampaignInStudio(scope, copy, navigate) } });
+        }
+      })
+      .catch((error) => {
+        reportError(error, { area: 'search', action: 'duplicate' });
+        toast.error(`Could not copy ${campaign.name}`);
+      });
+  };
+
   const openFile = (file: StoredFile) => {
     if (!file.publicUrl) {
       toast.error(`${file.filename} has no Supabase link.`);
@@ -61,7 +86,7 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
         <Command label="Search the studio" loop>
           <div className="cmdk-input-row">
             <Search size={18} className="text-muted-foreground" aria-hidden />
-            <Command.Input placeholder="Search campaigns, looks, files and studios" autoFocus />
+            <Command.Input placeholder="Search campaigns, clients, looks, files and studios" value={search} onValueChange={setSearch} autoFocus />
           </div>
           <Command.List className="cmdk-list">
             {failed && <p className="cmdk-empty" role="alert">Some saved work could not be loaded. Close search and open it again to retry.</p>}
@@ -77,9 +102,22 @@ export function CommandPalette({ open, onOpenChange, userId }: { open: boolean; 
             {data && data.campaigns.length > 0 && (
               <Command.Group heading="Campaigns">
                 {data.campaigns.map((campaign) => (
-                  <Command.Item key={campaign.id} value={`campaign ${campaign.name} ${studioInfo(campaign.mode).label} ${campaign.id}`} className="cmdk-item" onSelect={() => run(() => openCampaignInStudio(scope, campaign, navigate))}>
+                  <Command.Item key={campaign.id} value={`campaign ${campaign.name} ${studioInfo(campaign.mode).label} ${campaign.id} ${campaignText.get(campaign.id) ?? ''}`} className="cmdk-item" onSelect={() => run(() => openCampaignInStudio(scope, campaign, navigate))}>
                     <span className="item-mark" data-studio={campaign.mode} aria-hidden>{studioInitial(campaign.mode)}</span>
-                    <span className="item-text"><strong>{campaign.name}</strong><small>{studioInfo(campaign.mode).label} campaign, edited {relativeTime(campaign.updatedAt)}</small></span>
+                    <span className="item-text">
+                      <strong>{campaign.name}</strong>
+                      <small>{[campaignClient(campaign), `${studioInfo(campaign.mode).label} campaign`, statusLabels[campaignStatus(campaign.config)].toLowerCase(), `edited ${relativeTime(campaign.updatedAt)}`].filter(Boolean).join(', ')}</small>
+                    </span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            )}
+            {data && search.trim() && data.campaigns.length > 0 && (
+              <Command.Group heading="Duplicate a campaign">
+                {data.campaigns.map((campaign) => (
+                  <Command.Item key={`duplicate-${campaign.id}`} value={`duplicate copy campaign ${campaign.name} ${campaign.id} ${campaignClient(campaign)}`} className="cmdk-item" onSelect={() => run(() => duplicate(campaign))}>
+                    <span className="item-mark" data-studio="file" aria-hidden><Copy size={16} /></span>
+                    <span className="item-text"><strong>Duplicate {campaign.name}</strong><small>New draft with the same list and look, without generated columns</small></span>
                   </Command.Item>
                 ))}
               </Command.Group>

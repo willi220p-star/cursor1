@@ -1,5 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
+import { campaignAssetRows, campaignSlug } from './asset-scope';
+import { campaignHistory, cleanClient, pushHistory } from './campaign-status';
 import { attachPortraitCaches, stripPortraitDataUrls } from './portraits';
+import { outputColumnNames } from './writeback';
 import type { GeneratedAsset, SavedCampaign, SavedTemplate, StudioConfig, StudioMode } from './types';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
@@ -745,6 +748,102 @@ export async function moveCampaign(campaignId: string, folderId: string | null, 
   return {};
 }
 
+/** "<name> copy", then "<name> copy 2", 3… until no campaign (cloud or this browser) has it. */
+export function uniqueCopyName(name: string, taken: Iterable<string>) {
+  const used = new Set([...taken].map((item) => item.trim().toLowerCase()));
+  const base = `${name.replace(/ copy(?: \d+)?$/i, '').trim() || 'Campaign'} copy`;
+  if (!used.has(base.toLowerCase())) return base;
+  for (let index = 2; index < 1000; index++) {
+    const candidate = `${base} ${index}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+  return `${base} ${crypto.randomUUID().slice(0, 6)}`;
+}
+
+/** The list without this studio's generated columns, so a copy starts as a fresh draft. */
+export function stripOutputColumns(campaign: Pick<SavedCampaign, 'mode' | 'columns' | 'contacts' | 'config'>) {
+  const outputs = new Set(outputColumnNames(campaign.mode));
+  const columns = (campaign.columns ?? []).filter((column) => !outputs.has(column));
+  const contacts = (campaign.contacts ?? []).map((row) => {
+    const next = { ...row };
+    for (const column of outputs) delete next[column];
+    return next;
+  });
+  const config: StudioConfig = {
+    ...campaign.config,
+    sourceColumns: campaign.config.sourceColumns?.filter((column) => !outputs.has(column)),
+    fieldMap: campaign.config.fieldMap?.filter((item) => !outputs.has(item.column) && !outputs.has(item.customTag ?? '')),
+  };
+  return { columns, contacts, config };
+}
+
+/**
+ * Saves a copy under a new id and a unique name (the browser mirror matches by name + mode, so
+ * the name must differ), then files it in the same folder. The save never carries folder_id;
+ * moveCampaign sets it on its own.
+ */
+export async function duplicateCampaign(
+  campaign: SavedCampaign,
+  userId?: string,
+  takenNames: Iterable<string> = [],
+): Promise<{ campaign?: SavedCampaign; syncError?: string }> {
+  const local = readJson<SavedCampaign[]>(userKey(LOCAL_CAMPAIGNS, userId), []);
+  const name = uniqueCopyName(campaign.name, [...takenNames, ...local.map((item) => item.name)]);
+  const stripped = stripOutputColumns(campaign);
+  const id = crypto.randomUUID();
+  const config: StudioConfig = { ...stripped.config, id, campaignName: name, mode: campaign.mode, history: [] };
+  const saved = await saveCampaign(config, stripped.columns, stripped.contacts, userId);
+  if (saved.syncError) return { campaign: saved, syncError: saved.syncError };
+  const folderId = campaign.folderId ?? null;
+  if (folderId && saved.cloud) {
+    const moved = await moveCampaign(saved.id, folderId, userId);
+    if (moved.syncError) return { campaign: saved, syncError: `Copied, but not moved to its folder: ${moved.syncError}` };
+    return { campaign: { ...saved, folderId } };
+  }
+  return { campaign: saved };
+}
+
+/** Read-modify-write of one campaign's config jsonb (name, folder and list untouched). */
+async function patchCampaignConfig(
+  campaignId: string,
+  fallback: StudioConfig | undefined,
+  patch: (config: StudioConfig) => StudioConfig,
+  userId?: string,
+): Promise<{ syncError?: string }> {
+  if (supabase && userId) {
+    const row = await supabase.from('outbound_campaigns').select('config').eq('id', campaignId).eq('user_id', userId).maybeSingle();
+    if (row.error) return { syncError: row.error.message };
+    if (row.data) {
+      const previous = row.data.config && typeof row.data.config === 'object' ? row.data.config as StudioConfig : fallback;
+      if (previous) {
+        const updated = await supabase
+          .from('outbound_campaigns')
+          .update({ config: { ...patch(previous), id: campaignId } })
+          .eq('id', campaignId)
+          .eq('user_id', userId);
+        if (updated.error) return { syncError: updated.error.message };
+      }
+    }
+  }
+  patchLocalCampaign(userId, campaignId, (item) => ({ ...item, config: patch(item.config) }));
+  return {};
+}
+
+export async function setCampaignClient(campaign: SavedCampaign, client: string, userId?: string) {
+  const cleaned = cleanClient(client);
+  return patchCampaignConfig(campaign.id, campaign.config, (config) => ({ ...config, client: cleaned || undefined }), userId);
+}
+
+/** Adds a history event to a saved campaign without a full save (used for exports). */
+export async function appendCampaignHistory(
+  campaignId: string,
+  event: { kind: 'generated' | 'uploaded' | 'exported'; rows: number; at?: string },
+  userId?: string,
+) {
+  const at = event.at ?? new Date().toISOString();
+  return patchCampaignConfig(campaignId, undefined, (config) => ({ ...config, history: pushHistory(campaignHistory(config), { ...event, at }) }), userId);
+}
+
 export async function removeStoredFile(
   file: { storagePath?: string; publicUrl?: string },
   userId?: string,
@@ -784,10 +883,6 @@ const ASSET_BUCKET = 'outbound-assets';
 const PUBLIC_OBJECT = `/storage/v1/object/public/${ASSET_BUCKET}/`;
 
 export type StudioImageKind = 'desk' | 'paper' | 'signature' | 'gif' | 'list';
-
-function campaignSlug(name: string) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'campaign';
-}
 
 export function storagePathFromPublicUrl(url?: string) {
   if (!url) return null;
@@ -948,13 +1043,7 @@ export async function listStudioAssets(userId: string, mode: StudioMode, campaig
     .limit(400);
   if (error || !data) return [];
   const slug = campaignSlug(campaignName || `${mode} campaign`);
-  const generated = data.filter((row) => {
-    const meta = (row.metadata ?? {}) as { role?: string; mode?: string };
-    if (meta.role === 'upload') return false;
-    if (campaignId && row.campaign_id === campaignId) return true;
-    if (meta.mode === mode) return true;
-    return typeof row.storage_path === 'string' && row.storage_path.includes(`/${slug}/`);
-  });
+  const generated = campaignAssetRows(data, { campaignId, slug });
   const seen = new Set<string>();
   const unique: GeneratedAsset[] = [];
   for (const row of generated) {
