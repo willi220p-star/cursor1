@@ -94,6 +94,9 @@ import {
 } from '@/studio/cloud';
 import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
 import { OpenerLibrary } from '@/components/studio/opener-library';
+import { VariantBControls } from '@/components/studio/variant-b-controls';
+import { FirstTouchNote } from '@/components/studio/first-touch-note';
+import { configForRow, rowVariant } from '@/studio/variants';
 import { HookControls } from '@/components/studio/hook-controls';
 import {
   contactsStorageKey,
@@ -155,6 +158,7 @@ import {
   exportListCsv,
   listExportColumns,
   outputColumnNames,
+  outputColumnsFor,
   persistListMeta,
   readListMeta,
   stampStudioOutputs,
@@ -431,18 +435,23 @@ export function StudioGenerator({
   const gallerySamples = useMemo(() => [...libraryMemes, ...memeSamples], [libraryMemes]);
   const contact = contacts[selectedRow] ?? sampleContacts[0];
   const activeLayer = config.layers.find((layer) => layer.id === activeLayerId) ?? config.layers[0];
-  const tagText = mode === 'memes' || mode === 'gif'
-    ? config.layers.map((layer) => layer.text).join(' ')
-    : `${config.copy}\n${config.message}\n${config.postscript ?? ''}\n${config.signature ?? ''}`;
+  // B rows (A/B split) render, check and export with the variant B copy.
+  const rowConfig = useMemo(() => configForRow(config, contact), [config, contact]);
+  const contactVariant = rowVariant(config, contact);
+  const tagTextFor = (current: StudioConfig) => (mode === 'memes' || mode === 'gif'
+    ? current.layers.map((layer) => layer.text).join(' ')
+    : `${current.copy}\n${current.message}\n${current.postscript ?? ''}\n${current.signature ?? ''}`);
+  const tagText = tagTextFor(config);
   const mergeOptions = { hookColumn: config.hookColumn };
-  const invalid = missingTags(tagText, contact, mergeOptions);
+  const invalid = missingTags(tagTextFor(rowConfig), contact, mergeOptions);
   // Every row whose note would read wrong: a tag with no column, or a blank cell with no fallback.
   const rowsReadingWrong = useMemo(
     () => contacts.flatMap((row, index) => {
-      const tags = missingTags(tagText, row, { hookColumn: config.hookColumn });
+      const tags = missingTags(tagTextFor(configForRow(config, row)), row, { hookColumn: config.hookColumn });
       return tags.length ? [{ index, row: row.row, tags }] : [];
     }),
-    [contacts, tagText, config.hookColumn],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [contacts, tagText, config.copyVariantB, config.hookColumn],
   );
   const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
   useEffect(() => {
@@ -472,7 +481,7 @@ export function StudioGenerator({
     const moving = usesLivePreview(config);
     const phaseLoop = usesTextAnim(config) && (mode === 'handgif' || mode === 'avatar' || mode === 'memes' || mode === 'gif');
     setPreviewing(true);
-    const draw = (phase: number) => renderPreview(config, contact, canvas, phase, {
+    const draw = (phase: number) => renderPreview(rowConfig, contact, canvas, phase, {
       omitText: moving && (mode === 'memes' || mode === 'gif'),
       omitImage: isLiveGif(config) || usesPhotoMotion(config),
       omitAvatar: mode === 'avatar' && Boolean(avatarSource),
@@ -513,7 +522,7 @@ export function StudioGenerator({
       cancelled = true;
       previewAbort.abort();
     };
-  }, [config, contact, avatarSource, mode, stagePaused, generating, downloading]);
+  }, [config, rowConfig, contact, avatarSource, mode, stagePaused, generating, downloading]);
 
   // Skeleton only when a preview takes longer than the "instant" threshold.
   useEffect(() => {
@@ -1444,11 +1453,12 @@ export function StudioGenerator({
 
   const renderOne = async (current: Contact, signal?: AbortSignal, lane = 0) => {
     const extension = exportExtension(mode, config);
+    const forRow = configForRow(config, current);
     const blob = exportIsAnimated(mode, config)
-      ? await renderGifAsset(config, current, signal)
+      ? await renderGifAsset(forRow, current, signal)
       : mode === 'handwritten' || mode === 'avatar'
-        ? await renderStaticAsset(config, current)
-        : await staticWorker(lane).render(config, current);
+        ? await renderStaticAsset(forRow, current)
+        : await staticWorker(lane).render(forRow, current);
     return {
       id: crypto.randomUUID(),
       row: current.row,
@@ -1572,7 +1582,7 @@ export function StudioGenerator({
       const extras = nextAssets.filter((asset) => !merged.some((item) => item.id === asset.id || item.row === asset.row));
       return extras.length ? [...merged, ...extras] : merged;
     });
-    const stamped = stampStudioOutputs(rows, nextAssets, mode);
+    const stamped = stampStudioOutputs(rows, nextAssets, mode, config);
     const nextConfig = withOutputFieldMap(config, mode);
     setContacts(stamped);
     persistContactList(contactsKey, stamped);
@@ -1652,7 +1662,7 @@ export function StudioGenerator({
     const zip = new JSZip();
     const packed = await Promise.all(selected.map((asset) => ensureAssetBlob(asset)));
     packed.forEach((asset) => zip.file(asset.filename, asset.blob));
-    const stamped = stampStudioOutputs(list, packed, mode);
+    const stamped = stampStudioOutputs(list, packed, mode, config);
     const exported = exportListCsv(stamped, config, mode);
     zip.file('prospects.csv', exported.csv);
     if (exported.filename !== 'prospects.csv') zip.file(exported.filename, exported.csv);
@@ -2089,12 +2099,17 @@ export function StudioGenerator({
             userId={userId}
             hint={mode === 'handgif' ? 'Choosing a template fills the note this hand writes.' : avatarMode ? 'Choosing a template fills the letter.' : 'Choosing a template fills the message.'}
             onApply={(body, template) => {
-              updateConfig('copy', body);
+              setConfig((current) => ({ ...current, copy: body, openerId: undefined }));
               setAnnouncement(`Template ${template.name} applied`);
             }}
             onAnnounce={setAnnouncement}
           />
-          <OpenerLibrary contact={contact} onUseMessage={(body, title) => { updateConfig('copy', body); setAnnouncement(`Opener ${title} applied`); }} onUsePostscript={(text, title) => { updateConfig('postscript', text); setAnnouncement(`P.S. ${title} applied`); }} />
+          <OpenerLibrary
+            contact={contact}
+            onUseMessage={(body, title, id) => { setConfig((current) => ({ ...current, copy: body, openerId: id })); setAnnouncement(`Opener ${title} applied`); }}
+            onUsePostscript={(text, title) => { updateConfig('postscript', text); setAnnouncement(`P.S. ${title} applied`); }}
+            onUseVariantB={(body, title, id) => { setConfig((current) => ({ ...current, copyVariantB: { ...current.copyVariantB, copy: body, openerId: id } })); setAnnouncement(`Opener ${title} applied as variant B`); }}
+          />
           <FieldRow id="note-copy" label={<span className="flex items-center justify-between gap-2">Message <span className="mono text-xs font-normal text-muted-foreground">{handwritingMode ? `${noteWords} words` : `${config.copy.length} chars · ${copyLines} lines`}</span></span>}>
             <textarea id="note-copy" className="field leading-relaxed" rows={8} value={config.copy} onChange={(event) => updateConfig('copy', event.target.value)} aria-describedby={handwritingMode ? 'note-length' : undefined} />
           </FieldRow>
@@ -2129,6 +2144,7 @@ export function StudioGenerator({
           <FieldRow id="postscript" label="Postscript">
             <input id="postscript" className="field" value={config.postscript} onChange={(event) => updateConfig('postscript', event.target.value)} placeholder="P.S. {company} caught my attention." />
           </FieldRow>
+          <VariantBControls config={config} contact={contact} mergeOptions={mergeOptions} onChange={(next) => updateConfig('copyVariantB', next)} />
           <p className="helper">{mode === 'handgif' ? 'A photographed hand writes this note. Download and Generate are GIFs.' : avatarMode ? ((config.textMotion ?? 'still') === 'still' ? 'Still portrait card. Download is a PNG. Choose Auto writing if you want the letter to type in.' : 'Portrait stays. The letter animates. Download is a GIF.') : 'This studio exports a still page. Use Handwriting GIF if you want the writing hand.'}</p>
         </Section>
       ) : (
@@ -2579,8 +2595,9 @@ export function StudioGenerator({
           </FieldRow>
         )}
       </Section>
-      <InboxPreviewSection config={config} contact={contact} mode={mode} noteFit={noteFit} words={noteWords} onConfigChange={updateConfig} />
+      <InboxPreviewSection config={rowConfig} contact={contact} mode={mode} noteFit={noteFit} words={noteWords} onConfigChange={updateConfig} />
       <Section title="Generate">
+        <FirstTouchNote channel={config.channel} />
         {generating ? (
           <div className="flex flex-col gap-3" role="status" aria-live="polite">
             <Progress value={progress} aria-label="Batch progress" className="h-2 bg-surface-2 [&>div]:bg-primary [&>div]:transition-transform [&>div]:duration-[220ms]" />
@@ -2615,6 +2632,7 @@ export function StudioGenerator({
         <p className="helper">
           Generate writes {outputColumnNames(mode).slice(0, 2).map((column) => `{${column}}`).join(' and ')} onto every row of the imported spreadsheet, uploads the files to Supabase, and includes that updated CSV in the ZIP.
         </p>
+        <p className="helper">Use {`{${outputColumnsFor(mode).alt}}`} as the image alt text in Smartlead, so blocked images still say something.</p>
       </Section>
       <Section title="Saved templates" hint="Each studio keeps its own library in Supabase. Delete removes that look here and in Supabase.">
         {templatesForMode.length ? templatesForMode.map((item) => (
@@ -2818,6 +2836,7 @@ export function StudioGenerator({
               onPointerCancel={() => { dragRef.current = null; }}
             >
               <canvas ref={previewCanvas} className="h-full w-full" aria-label={`Preview of ${previewFilename}`} role="img" />
+              {contactVariant === 'B' && <span className="variant-badge">Variant B</span>}
               {slowPreview && (
                 <div className="stage-skeleton" role="status" aria-label="Rendering preview">
                   <LoaderCircle size={24} className="animate-spin text-muted-foreground" aria-hidden />

@@ -482,6 +482,10 @@ export type StudioConfig = {
   websiteColumn?: string;
   avatarColumn?: string;
   messageColumn?: string;
+  /** Opener library id the message came from. Kept through hand edits (the copy still grows from that opener); cleared when a saved template replaces the copy. */
+  openerId?: string;
+  /** Optional second message for an A/B split. Even rows get it (see variants.ts); unset means everyone gets variant A. No postscript keeps variant A's P.S. */
+  copyVariantB?: { copy: string; postscript?: string; openerId?: string };
   /** Column {hook} reads from. Unset: guessed from names like hook, icebreaker, first_line. */
   hookColumn?: string;
   /** How the hook is marked in the note, like a pen would. Default underline. */

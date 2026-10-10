@@ -1175,6 +1175,17 @@ body > div:last-child > span + img { display: inline !important; }
 .note-length-good svg { color: var(--success); }
 .note-length-info svg { color: var(--muted-foreground); }
 .note-length-warn { color: var(--warning); }
+
+/* Ship advice and A/B variants ---------------------------------------------------------------- */
+.ship-note { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 12px 44px 12px 14px; border: 1px solid color-mix(in srgb, var(--studio) 30%, var(--border)); border-radius: 12px; background: color-mix(in srgb, var(--studio) 6%, var(--card)); font-size: 13px; line-height: 1.5; color: var(--foreground); }
+.ship-note > svg { flex: none; margin-top: 2px; color: var(--studio); }
+.ship-note strong { display: block; font-weight: 600; }
+.ship-note p { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.ship-note-close { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: var(--muted-foreground); }
+.ship-note-close:hover { background: var(--surface-2); color: var(--foreground); }
+.ship-note-close:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.variant-b { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px dashed var(--border); border-radius: 12px; }
+.variant-badge { position: absolute; top: 8px; right: 8px; z-index: 2; border-radius: 999px; background: var(--studio); color: var(--studio-ink); font-size: 12px; font-weight: 700; line-height: 22px; padding: 0 10px; pointer-events: none; box-shadow: 0 2px 8px rgb(16 12 8 / .2); }
 .opener-library { gap: 14px; max-height: min(88vh, 860px); }
 .opener-library-kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .opener-library-count { margin-left: 6px; color: var(--muted-foreground); font-family: var(--app-font-mono); font-size: 12px; font-weight: 500; }
@@ -1189,7 +1200,8 @@ body > div:last-child > span + img { display: inline !important; }
 .opener-card-category { margin: 0; color: var(--muted-foreground); font-size: 12px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
 .opener-card-body { margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--card); font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .opener-card-use { justify-self: start; }
-@media (max-width: 480px) { .opener-card-use { justify-self: stretch; } }
+.opener-card-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 480px) { .opener-card-use { justify-self: stretch; } .opener-card-actions > .opener-card-use { flex: 1 1 100%; } }
 
 /* Inbox preview ------------------------------------------------------------------------------- */
 .inbox-summary { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 1.45; color: var(--muted-foreground); }
