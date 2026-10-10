@@ -53,6 +53,27 @@ import { consumeSampleListRequest, loadSampleList, recordExport } from '@/studio
 import { decodeGifFile } from '@/studio/gif-decoder';
 import { createBatchRenderer } from '@/studio/batch-renderer';
 import { batchConcurrency, runQueue } from '@/studio/batch-queue';
+import {
+  CHUNK_SIZE,
+  UPLOAD_GROUP_SIZE,
+  UPLOAD_LANES,
+  ZIP_FETCH_CONCURRENCY,
+  chunkProgressLabel,
+  chunkStatusCounts,
+  etaSeconds as estimateEta,
+  etaText,
+  fetchZipFiles,
+  formatCount,
+  formatMegabytes,
+  heldBytes,
+  overMemoryBudget,
+  planChunks,
+  planZipParts,
+  projectHeldBytes,
+  releaseBlob,
+  zipItemsFor,
+  zipPartName,
+} from '@/studio/batch-chunks';
 import { loadArtefactFonts } from '@/studio/fonts';
 import { CAPTION_LINE_HEIGHT, CAPTION_STROKE, CAPTION_STROKE_COLOR, canvasCaptionMeasure, captionFont, fitLayerCaption } from '@/studio/caption-fit';
 import { missingTags, safeFilename, renderMerge } from '@/studio/merge';
@@ -411,6 +432,14 @@ export function StudioGenerator({
   const [progressTotal, setProgressTotal] = useState(0);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
   const [laneCount, setLaneCount] = useState(1);
+  // Big lists generate in chunks: which chunk is running and whether it is drawing or uploading.
+  const [chunkInfo, setChunkInfo] = useState<{ chunk: number; chunks: number; start: number; end: number; phase: 'making' | 'uploading' } | null>(null);
+  // File bytes still held in this tab (not uploaded yet), and what the run will hold at this pace.
+  const [heldInfo, setHeldInfo] = useState<{ held: number; projected: number } | null>(null);
+  // A run that stopped (or left failed rows) can resume without redoing finished rows.
+  const [stoppedRun, setStoppedRun] = useState<{ done: number; total: number } | null>(null);
+  const [zipping, setZipping] = useState(false);
+  const resumeRef = useRef<() => void>(() => {});
   const [generating, setGenerating] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [slowPreview, setSlowPreview] = useState(false);
@@ -1454,6 +1483,10 @@ export function StudioGenerator({
     setDeskTab('look');
   };
 
+  function revokeBlobUrl(url?: string) {
+    if (url?.startsWith('blob:')) URL.revokeObjectURL(url);
+  }
+
   function terminateStaticWorkers() {
     staticWorkersRef.current.forEach((worker) => worker.terminate());
     staticWorkersRef.current = [];
@@ -1490,103 +1523,225 @@ export function StudioGenerator({
     } as GeneratedAsset;
   };
 
+  /**
+   * Generate the whole list, CHUNK_SIZE rows at a time. After each chunk the finished files are
+   * written back (and uploaded when signed in) before the next chunk starts, and uploaded files
+   * drop their bytes from memory: review shows them from their public URL and a ZIP fetches them
+   * again. Without uploads the files stay in memory, so past MEMORY_WARN_BYTES we warn.
+   * `keep` holds finished rows (Stop + Resume, or changed-rows-only); they are never redone.
+   */
   const renderBatch = async (keep: GeneratedAsset[] = []) => {
     setError('');
     setGenerating(true);
+    setStoppedRun(null);
     cancelRef.current = false;
     const controller = new AbortController();
     batchControllerRef.current = controller;
-    if (!keep.length) assets.forEach((asset) => { URL.revokeObjectURL(asset.url); if (asset.still?.url) URL.revokeObjectURL(asset.still.url); });
-    const batchContacts = contacts.slice(0, 400);
-    const keptRows = new Set(keep.map((asset) => asset.row));
-    const todo = batchContacts.filter((contact) => !keptRows.has(contact.row));
+    const batchContacts = contacts;
+    const listRows = new Set(batchContacts.map((contact) => contact.row));
+    const kept = keep.filter((asset) => listRows.has(asset.row));
+    if (!kept.length) assets.forEach((asset) => { revokeBlobUrl(asset.url); revokeBlobUrl(asset.still?.url); });
+    const keptRows = new Set(kept.map((asset) => asset.row));
+    const total = batchContacts.length;
+    const chunks = planChunks(total);
     const animated = exportIsAnimated(mode, config);
     const lanes = batchConcurrency(animated ? 'gif' : mode === 'handwritten' || mode === 'avatar' ? 'main' : 'worker');
-    setProgressTotal(batchContacts.length);
-    setProgressDone(keep.length);
-    setProgress(Math.round((keep.length / Math.max(1, batchContacts.length)) * 100));
+    const uploadsOn = Boolean(userId && supabaseConfigured);
+    setProgressTotal(total);
+    setProgressDone(kept.length);
+    setProgress(Math.round((kept.length / Math.max(1, total)) * 100));
     setEtaSeconds(null);
     setLaneCount(lanes);
+    setHeldInfo(null);
     setRowStatus(Object.fromEntries(batchContacts.map((contact) => [contact.row, keptRows.has(contact.row) ? 'done' : 'waiting'])) as Record<number, RowState>);
     batchStartRef.current = performance.now();
-    let done = keep.length;
-    const setRow = (row: number, state: RowState) => setRowStatus((current) => ({ ...current, [row]: state }));
-    const results = await runQueue(todo, lanes, async (current, lane) => {
-      setRow(current.row, 'working');
-      let asset: GeneratedAsset | undefined;
-      try {
-        asset = await renderOne(current, controller.signal, lane);
-      } catch (reason) {
-        if (controller.signal.aborted || cancelRef.current) {
-          setRow(current.row, 'waiting');
-          return undefined;
-        }
-        asset = {
-          id: crypto.randomUUID(),
-          row: current.row,
-          filename: safeFilename(config.filename, current, exportExtension(mode, config)),
-          blob: new Blob(),
-          url: '',
-          bytes: 0,
-          selected: false,
-          status: 'failed',
-          error: reason instanceof Error ? reason.message : 'Generation failed.',
-        };
-      }
-      setRow(current.row, asset.status === 'failed' ? 'failed' : 'done');
-      done += 1;
-      setProgressDone(done);
-      setProgress(Math.round((done / batchContacts.length) * 100));
-      const elapsed = (performance.now() - batchStartRef.current) / 1000;
-      const finishedThisRun = done - keep.length;
-      if (finishedThisRun > 0) setEtaSeconds(Math.max(0, Math.round((elapsed / finishedThisRun) * (batchContacts.length - done))));
-      return asset;
-    }, { shouldStop: () => cancelRef.current });
-    const fresh = results.filter((asset): asset is GeneratedAsset => Boolean(asset));
-    // Keep the list in row order, whichever lane finished first.
+    let done = kept.length;
+    let finishedThisRun = 0;
+    let rows = batchContacts;
+    let currentConfig = config;
+    let uploadedTotal = 0;
+    let memoryWarned = false;
     const order = new Map(batchContacts.map((contact, index) => [contact.row, index]));
-    const generated = [...keep, ...fresh].sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0));
-    setAssets(generated);
-    terminateStaticWorkers();
-    batchControllerRef.current = null;
-    if (cancelRef.current) {
-      toast(`Stopped with ${generated.length} finished ${generated.length === 1 ? 'row' : 'rows'} kept`, {
-        duration: 8000,
-        action: generated.length < batchContacts.length
-          ? { label: 'Resume', onClick: () => { void renderBatch(generated); } }
-          : undefined,
+    const byOrder = (list: GeneratedAsset[]) => list.sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0));
+    let all = byOrder([...kept]);
+    const setRow = (row: number, state: RowState) => setRowStatus((current) => ({ ...current, [row]: state }));
+    const updateEta = () => {
+      setEtaSeconds(estimateEta((performance.now() - batchStartRef.current) / 1000, finishedThisRun, total - done));
+    };
+    try {
+      for (const chunk of chunks) {
+        if (cancelRef.current) break;
+        const chunkContacts = batchContacts.slice(chunk.start, chunk.end);
+        const todo = chunkContacts.filter((contact) => !keptRows.has(contact.row));
+        setChunkInfo({ chunk: chunk.index + 1, chunks: chunks.length, start: chunk.start, end: chunk.end, phase: 'making' });
+        if (!todo.length) continue;
+        const results = await runQueue(todo, lanes, async (current, lane) => {
+          setRow(current.row, 'working');
+          let asset: GeneratedAsset | undefined;
+          try {
+            asset = await renderOne(current, controller.signal, lane);
+          } catch (reason) {
+            if (controller.signal.aborted || cancelRef.current) {
+              setRow(current.row, 'waiting');
+              return undefined;
+            }
+            asset = {
+              id: crypto.randomUUID(),
+              row: current.row,
+              filename: safeFilename(config.filename, current, exportExtension(mode, config)),
+              blob: new Blob(),
+              url: '',
+              bytes: 0,
+              selected: false,
+              status: 'failed',
+              error: reason instanceof Error ? reason.message : 'Generation failed.',
+            };
+          }
+          setRow(current.row, asset.status === 'failed' ? 'failed' : 'done');
+          done += 1;
+          finishedThisRun += 1;
+          setProgressDone(done);
+          setProgress(Math.round((done / total) * 100));
+          updateEta();
+          return asset;
+        }, { shouldStop: () => cancelRef.current });
+        const fresh = results.filter((asset): asset is GeneratedAsset => Boolean(asset));
+        if (!fresh.length) continue;
+        all = byOrder([...all, ...fresh]);
+        setAssets(all);
+        // Write this chunk back (uploading it when signed in) before the next one starts.
+        if (uploadsOn) setChunkInfo({ chunk: chunk.index + 1, chunks: chunks.length, start: chunk.start, end: chunk.end, phase: 'uploading' });
+        const saved = await persistOutputs(fresh, rows, { quiet: true, base: currentConfig, recordHistory: false });
+        rows = saved.rows;
+        currentConfig = saved.config;
+        uploadedTotal += saved.uploaded;
+        // Uploaded files leave memory; files that stayed local keep their bytes.
+        const written = new Map(saved.assets.map((asset) => [asset.id, asset]));
+        all = all.map((asset) => {
+          const next = written.get(asset.id);
+          if (!next) return asset;
+          const released = releaseBlob(next);
+          released.revoke.forEach((url) => URL.revokeObjectURL(url));
+          return released.asset;
+        });
+        setAssets(all);
+        updateEta();
+        const held = heldBytes(all);
+        const holding = all.filter((asset) => asset.blob.size).length;
+        const projected = projectHeldBytes({ held, madeRows: holding, remainingRows: Math.max(0, total - done) });
+        setHeldInfo(held > 0 ? { held, projected } : null);
+        if (!memoryWarned && (overMemoryBudget(held) || overMemoryBudget(projected))) {
+          memoryWarned = true;
+          const now = overMemoryBudget(held);
+          toast.warning(`About ${formatMegabytes(now ? held : projected)} of files ${now ? 'are' : 'will be'} held in this tab`, {
+            duration: 12000,
+            description: uploadsOn
+              ? 'Some files did not upload, so they stay in memory. Stop and download them in ZIP parts, or retry the upload.'
+              : 'Files leave memory only once they are uploaded. Sign in so each chunk uploads as it finishes, or Stop and download the ZIP now (it splits into parts).',
+          });
+        }
+      }
+    } finally {
+      terminateStaticWorkers();
+      batchControllerRef.current = null;
+      setChunkInfo(null);
+    }
+    const stopped = cancelRef.current;
+    const made = all.filter((asset) => asset.status !== 'failed').length;
+    const failed = all.length - made;
+    const madeThisRun = all.some((asset) => asset.status !== 'failed' && !keptRows.has(asset.row));
+    // One history entry per run, not one per chunk.
+    const at = new Date().toISOString();
+    const events = [
+      ...(madeThisRun ? [{ kind: 'generated' as const, rows: made, at }] : []),
+      ...(uploadedTotal ? [{ kind: 'uploaded' as const, rows: uploadedTotal, at }] : []),
+    ];
+    if (events.length) {
+      let history = currentConfig.history;
+      for (const event of events) history = pushHistory(history, event);
+      const campaignId = currentConfig.id;
+      setConfig((current) => ({ ...current, id: current.id ?? campaignId, history }));
+      if (campaignId) {
+        for (const event of events) {
+          const result = await appendCampaignHistory(campaignId, event, userId);
+          if (result.syncError) reportError(new Error(result.syncError), { area: 'campaign-history', mode });
+        }
+      }
+    }
+    setGenerating(false);
+    if (stopped) {
+      setStoppedRun({ done: made, total });
+      toast(`Stopped with ${formatCount(made)} of ${formatCount(total)} rows finished`, {
+        duration: 10000,
+        description: 'Finished rows are kept. Resume makes only the rest.',
+        action: made < total ? { label: 'Resume', onClick: () => resumeRef.current() } : undefined,
       });
     } else {
-      toast.success(`${generated.length} assets ready for review${contacts.length > 400 ? ' (first 400 rows)' : ''}`);
+      toast.success(`${formatCount(made)} assets ready for review${failed ? ` · ${formatCount(failed)} failed` : ''}`, {
+        description: uploadedTotal ? `${formatCount(uploadedTotal)} uploaded to Supabase.` : undefined,
+      });
+      if (failed) setStoppedRun({ done: made, total });
+      if (made) setReviewOpen(true);
     }
-    try {
-      const made = generated.filter((asset) => asset.status !== 'failed').length;
-      const stamped = await writeBackOutputs(generated, contacts, false, made ? [{ kind: 'generated', rows: made }] : []);
-      if (!cancelRef.current && generated.some((asset) => asset.status !== 'failed')) setReviewOpen(true);
-      return { generated, contacts: stamped };
-    } finally {
-      setGenerating(false);
-    }
+    return { generated: all, contacts: rows };
   };
+
+  /** Resume a stopped or partly failed run: finished rows whose inputs are unchanged are kept. */
+  const resumeBatch = () => {
+    if (generating) return;
+    const plan = planRegeneration(contacts, assets, config, mode, outputColumnsFor(mode));
+    void renderBatch(plan.keep);
+  };
+  resumeRef.current = resumeBatch;
 
   const writeBackOutputs = async (
     generated: GeneratedAsset[],
     rows = contacts,
     quiet = false,
     events: Array<{ kind: 'generated' | 'uploaded' | 'exported'; rows: number }> = [],
-  ) => {
-    if (!generated.length) return rows;
+  ) => (await persistOutputs(generated, rows, { quiet, events })).rows;
+
+  /**
+   * Uploads (when signed in), stamps the rows with file names and links, and saves the campaign.
+   * `base` is the config to build on: a chunked run passes the config the last chunk saved, so
+   * a new campaign keeps the id its first chunk got.
+   */
+  const persistOutputs = async (
+    generated: GeneratedAsset[],
+    rows: Contact[],
+    {
+      quiet = false,
+      events = [],
+      base = config,
+      recordHistory = true,
+    }: {
+      quiet?: boolean;
+      events?: Array<{ kind: 'generated' | 'uploaded' | 'exported'; rows: number }>;
+      base?: StudioConfig;
+      /** A chunked run records one history entry for the whole run instead. */
+      recordHistory?: boolean;
+    } = {},
+  ): Promise<{ rows: Contact[]; assets: GeneratedAsset[]; config: StudioConfig; uploaded: number }> => {
+    if (!generated.length) return { rows, assets: generated, config: base, uploaded: 0 };
     let nextAssets = generated;
     let uploadedCount = 0;
     const uploadable = generated.filter((asset) => asset.status !== 'failed' && asset.blob.size && !asset.publicUrl);
     if (userId && supabaseConfigured && uploadable.length) {
       try {
         if (!quiet) toast('Uploading generated files to Supabase…');
-        let uploaded = await uploadGeneratedAssets(uploadable, config.campaignName, userId, { campaignId: config.id, mode });
+        // A few uploads run side by side (each group uploads in order), so a 400-row chunk is not
+        // 400 round trips back to back.
+        const upload = async (list: GeneratedAsset[]) => {
+          const groups: GeneratedAsset[][] = [];
+          for (let index = 0; index < list.length; index += UPLOAD_GROUP_SIZE) groups.push(list.slice(index, index + UPLOAD_GROUP_SIZE));
+          const done = await runQueue(groups, UPLOAD_LANES, (group) => uploadGeneratedAssets(group, base.campaignName, userId, { campaignId: base.id, mode }));
+          return done.flatMap((group) => group ?? []);
+        };
+        let uploaded = await upload(uploadable);
         // A brief network drop fails only some files; send those again before giving up.
         for (let attempt = 1; attempt <= 2 && uploaded.some((asset) => asset.uploadStatus === 'failed'); attempt++) {
           await new Promise((resolve) => setTimeout(resolve, 800 * attempt));
-          const retried = await uploadGeneratedAssets(uploaded.filter((asset) => asset.uploadStatus === 'failed'), config.campaignName, userId, { campaignId: config.id, mode });
+          const retried = await upload(uploaded.filter((asset) => asset.uploadStatus === 'failed'));
           const again = new Map(retried.map((asset) => [asset.id, asset]));
           uploaded = uploaded.map((asset) => again.get(asset.id) ?? asset);
         }
@@ -1606,15 +1761,19 @@ export function StudioGenerator({
       const byId = new Map(nextAssets.map((asset) => [asset.id, asset]));
       const byRow = new Map(nextAssets.map((asset) => [asset.row, asset]));
       const merged = current.map((asset) => byId.get(asset.id) ?? byRow.get(asset.row) ?? asset);
-      const extras = nextAssets.filter((asset) => !merged.some((item) => item.id === asset.id || item.row === asset.row));
+      const present = new Set(merged.map((asset) => asset.id));
+      const presentRows = new Set(merged.map((asset) => asset.row));
+      const extras = nextAssets.filter((asset) => !present.has(asset.id) && !presentRows.has(asset.row));
       return extras.length ? [...merged, ...extras] : merged;
     });
-    const stamped = stampStudioOutputs(rows, nextAssets, mode, config);
-    let history = config.history;
-    for (const event of [...events, ...(uploadedCount ? [{ kind: 'uploaded' as const, rows: uploadedCount }] : [])]) {
-      history = pushHistory(history, event);
+    const stamped = stampStudioOutputs(rows, nextAssets, mode, base);
+    let history = base.history;
+    if (recordHistory) {
+      for (const event of [...events, ...(uploadedCount ? [{ kind: 'uploaded' as const, rows: uploadedCount }] : [])]) {
+        history = pushHistory(history, event);
+      }
     }
-    const nextConfig = withOutputFieldMap(history === config.history ? config : { ...config, history }, mode);
+    let nextConfig = withOutputFieldMap(history === base.history ? base : { ...base, history }, mode);
     setContacts(stamped);
     persistContactList(contactsKey, stamped);
     persistListMeta(scope, [mode], {
@@ -1627,7 +1786,8 @@ export function StudioGenerator({
     setConfig(nextConfig);
     try {
       const saved = await saveCampaign(nextConfig, listExportColumns(stamped, nextConfig.sourceColumns, mode), stamped, userId);
-      if (saved.config.id !== config.id || history !== config.history) {
+      if (saved.config.id !== nextConfig.id) {
+        nextConfig = { ...nextConfig, id: saved.config.id };
         setConfig((current) => ({ ...current, id: saved.config.id, fieldMap: nextConfig.fieldMap, history: nextConfig.history }));
       }
       if (saved.syncError) setError(`Assets are on the list locally, but cloud sync failed: ${saved.syncError}`);
@@ -1640,7 +1800,7 @@ export function StudioGenerator({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Could not save the updated list.');
     }
-    return stamped;
+    return { rows: stamped, assets: nextAssets, config: nextConfig, uploaded: uploadedCount };
   };
 
   const generateBatch = async () => {
@@ -1650,8 +1810,7 @@ export function StudioGenerator({
       terminateStaticWorkers();
       return;
     }
-    const batchContacts = contacts.slice(0, 400);
-    const plan = planRegeneration(batchContacts, assets, config, mode, outputColumnsFor(mode));
+    const plan = planRegeneration(contacts, assets, config, mode, outputColumnsFor(mode));
     if (plan.keep.length && plan.total > 0) {
       setRegenPlan(plan);
       return;
@@ -1712,36 +1871,118 @@ export function StudioGenerator({
     }
   };
 
+  /**
+   * ZIP download. Past ZIP_MAX_FILES files or ZIP_MAX_BYTES it splits into parts
+   * (campaign-part-1-of-3.zip), each with its own manifest and CSV slice; the last part also holds
+   * the full list CSV. Files not in memory (uploaded and released, or kept from an earlier run)
+   * are fetched from their public URL a few at a time, one part at a time, so only one part's
+   * bytes are held at once. Files that cannot be fetched are listed in missing-files.csv in their
+   * part and in the error banner, never dropped silently.
+   */
   const zipAndSave = async (selected: GeneratedAsset[], label: string, list = contacts) => {
     if (!selected.length) {
       setError('Select at least one generated asset.');
       return;
     }
-    const zip = new JSZip();
-    const packed = await Promise.all(selected.map((asset) => ensureAssetBlob(asset)));
-    packed.forEach((asset) => {
-      zip.file(asset.filename, asset.blob);
-      if (asset.still?.blob.size) zip.file(asset.still.filename, asset.still.blob);
-    });
-    const stamped = stampStudioOutputs(list, packed, mode, config);
-    const exported = exportListCsv(stamped, config, mode);
-    zip.file('prospects.csv', exported.csv);
-    if (exported.filename !== 'prospects.csv') zip.file(exported.filename, exported.csv);
-    const manifest = packed.map((asset) => ({
-      row: asset.row,
-      filename: asset.filename,
-      bytes: asset.bytes,
-      image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.image_url ?? ''),
-      smartlead_image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.smartlead_image_url ?? ''),
-      ...(asset.still ? { still_filename: asset.still.filename, still_url: asset.still.publicUrl ?? asset.still.filename } : {}),
-    }));
-    zip.file('manifest.json', JSON.stringify(manifest, null, 2));
-    saveAs(await zip.generateAsync({ type: 'blob' }), `${config.campaignName.replace(/\W+/g, '-') || 'campaign'}.zip`);
-    recordExport(scope, selected.length);
-    recordCampaignExport(selected.length);
-    toast.success(`${selected.length} assets downloaded in a ZIP${label}`, {
-      description: `${exported.filename} includes the generated file names and links.`,
-    });
+    if (zipping) return;
+    setZipping(true);
+    const toastId = 'zip-progress';
+    try {
+      const parts = planZipParts(zipItemsFor(selected));
+      const stamped = stampStudioOutputs(list, selected, mode, config);
+      const stampedByRow = new Map(stamped.map((row) => [row.row, row]));
+      const full = exportListCsv(stamped, config, mode);
+      const base = config.campaignName || 'campaign';
+      const missing: Array<{ row: number; filename: string; url: string; reason: string }> = [];
+      let packedCount = 0;
+      for (let part = 0; part < parts.length; part++) {
+        const partAssets = parts[part].map((index) => selected[index]);
+        const where = parts.length > 1 ? ` for part ${part + 1} of ${parts.length}` : '';
+        const toFetch = partAssets.filter((asset) => !asset.blob.size || (asset.still && !asset.still.blob.size)).length;
+        let fetched = 0;
+        if (toFetch) toast.loading(`Fetching 0 of ${formatCount(toFetch)} files${where}…`, { id: toastId });
+        else toast.loading(`Packing ${formatCount(partAssets.length)} files${where}…`, { id: toastId });
+        const packed = await runQueue(partAssets, ZIP_FETCH_CONCURRENCY, async (asset) => {
+          const needs = !asset.blob.size || (asset.still && !asset.still.blob.size);
+          const result = await fetchZipFiles(asset);
+          if (needs) {
+            fetched += 1;
+            toast.loading(`Fetching ${formatCount(fetched)} of ${formatCount(toFetch)} files${where}…`, { id: toastId });
+          }
+          return result;
+        });
+        const zip = new JSZip();
+        const partMissing: typeof missing = [];
+        packed.forEach((entry, index) => {
+          const asset = partAssets[index];
+          if (!entry?.blob) {
+            partMissing.push({ row: asset.row, filename: asset.filename, url: asset.publicUrl ?? '', reason: entry?.error ?? 'Not downloaded' });
+          } else {
+            zip.file(asset.filename, entry.blob);
+            packedCount += 1;
+          }
+          if (asset.still) {
+            if (entry?.still) zip.file(asset.still.filename, entry.still);
+            else partMissing.push({ row: asset.row, filename: asset.still.filename, url: asset.still.publicUrl ?? '', reason: entry?.stillError ?? 'Not downloaded' });
+          }
+        });
+        const partRows = partAssets.map((asset) => stampedByRow.get(asset.row)).filter((row): row is Contact => Boolean(row));
+        if (parts.length > 1) {
+          const slice = exportListCsv(partRows, config, mode);
+          zip.file(`prospects-part-${part + 1}-of-${parts.length}.csv`, slice.csv);
+        }
+        if (part === parts.length - 1) {
+          // The full list (every row, not only this part) goes in the last part.
+          zip.file('prospects.csv', full.csv);
+          if (full.filename !== 'prospects.csv') zip.file(full.filename, full.csv);
+        }
+        const manifest = partAssets.map((asset) => {
+          const row = stampedByRow.get(asset.row);
+          return {
+            row: asset.row,
+            filename: asset.filename,
+            bytes: asset.bytes,
+            image_url: asset.publicUrl ?? String(row?.image_url ?? ''),
+            smartlead_image_url: asset.publicUrl ?? String(row?.smartlead_image_url ?? ''),
+            ...(asset.still ? { still_filename: asset.still.filename, still_url: asset.still.publicUrl ?? asset.still.filename } : {}),
+          };
+        });
+        zip.file('manifest.json', JSON.stringify(manifest, null, 2));
+        if (partMissing.length) {
+          const quote = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
+          zip.file('missing-files.csv', ['row,filename,url,reason', ...partMissing.map((item) => [item.row, item.filename, item.url, item.reason].map(quote).join(','))].join('\n'));
+          missing.push(...partMissing);
+        }
+        toast.loading(`Writing ${zipPartName(base, part + 1, parts.length)}…`, { id: toastId });
+        saveAs(await zip.generateAsync({ type: 'blob' }), zipPartName(base, part + 1, parts.length));
+        // Give the browser a moment between downloads so it does not drop one.
+        if (part < parts.length - 1) await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      recordExport(scope, packedCount);
+      recordCampaignExport(packedCount);
+      const inParts = parts.length > 1 ? ` in ${parts.length} ZIP parts` : ' in a ZIP';
+      if (missing.length) {
+        const names = missing.slice(0, 5).map((item) => item.filename).join(', ');
+        setError(`${missing.length} ${missing.length === 1 ? 'file' : 'files'} could not be downloaded into the ZIP: ${names}${missing.length > 5 ? ` and ${missing.length - 5} more` : ''}. Each part lists them in missing-files.csv.`);
+        toast.warning(`${formatCount(packedCount)} assets downloaded${inParts}${label} · ${missing.length} missing`, {
+          id: toastId,
+          duration: 12000,
+          description: 'The missing files are listed in missing-files.csv and the banner above.',
+        });
+      } else {
+        toast.success(`${formatCount(packedCount)} assets downloaded${inParts}${label}`, {
+          id: toastId,
+          description: parts.length > 1
+            ? `Each part has its own manifest and CSV slice; the last part has the full ${full.filename}.`
+            : `${full.filename} includes the generated file names and links.`,
+        });
+      }
+    } catch (reason) {
+      toast.dismiss(toastId);
+      setError(reason instanceof Error ? reason.message : 'Could not build the ZIP.');
+    } finally {
+      setZipping(false);
+    }
   };
 
   const downloadZip = async () => {
@@ -1825,7 +2066,8 @@ export function StudioGenerator({
     const before = assets;
     const next: GeneratedAsset[] = [];
     for (const asset of assets) {
-      if (asset.status !== 'warning' || !asset.url) {
+      // Uploaded files whose bytes left memory are already in the cloud; leave them as they are.
+      if (asset.status !== 'warning' || !asset.url || !asset.blob.size) {
         next.push(asset);
         continue;
       }
@@ -1931,7 +2173,13 @@ export function StudioGenerator({
   );
   const copyLines = config.copy.split('\n').length;
   const templatesForMode = savedTemplates.filter((item) => item.mode === mode);
-  const batchSize = Math.min(contacts.length, 400);
+  const batchSize = contacts.length;
+  const multiChunk = Boolean(chunkInfo && chunkInfo.chunks > 1);
+  // How the running chunk is going, row by row (the filmstrip only shows the first rows).
+  const chunkCounts = useMemo(
+    () => (chunkInfo ? chunkStatusCounts(contacts.slice(chunkInfo.start, chunkInfo.end).map((row) => row.row), rowStatus) : null),
+    [chunkInfo, contacts, rowStatus],
+  );
 
   const cropPopover = (kind: 'image' | 'avatar', trigger: ReactNode) => (
     <Popover open={cropMode === kind} onOpenChange={(open) => { if (!open) setCropMode('off'); }} modal={false}>
@@ -2698,13 +2946,23 @@ export function StudioGenerator({
         {generating ? (
           <div className="flex flex-col gap-3" role="status" aria-live="polite">
             <Progress value={progress} aria-label="Batch progress" className="h-2 bg-surface-2 [&>div]:bg-primary [&>div]:transition-transform [&>div]:duration-[220ms]" />
-            <p className="mono text-sm">{progress}% · {progressDone} of {progressTotal}{etaSeconds !== null ? ` · ~${etaSeconds} s left` : ''}</p>
+            <p className="mono text-sm">{progress}% · {multiChunk && chunkInfo ? chunkProgressLabel({ chunk: chunkInfo.chunk, chunks: chunkInfo.chunks, done: progressDone, total: progressTotal }) : `${formatCount(progressDone)} of ${formatCount(progressTotal)}`}{etaSeconds !== null ? ` · ${etaText(etaSeconds)}` : ''}</p>
             <button type="button" className="btn btn-quiet w-full" onClick={generateBatch}><Pause size={16} aria-hidden /> Cancel and keep completed</button>
           </div>
         ) : (
-          <button type="button" onClick={generateBatch} className="btn btn-primary btn-lg w-full" disabled={!contacts.length} title={!contacts.length ? 'Import a list first' : undefined}>
-            <Wand2 size={16} aria-hidden /> Generate {batchSize} {batchSize === 1 ? 'asset' : 'assets'}
-          </button>
+          <>
+            <button type="button" onClick={generateBatch} className="btn btn-primary btn-lg w-full" disabled={!contacts.length} title={!contacts.length ? 'Import a list first' : undefined}>
+              <Wand2 size={16} aria-hidden /> Generate {formatCount(batchSize)} {batchSize === 1 ? 'asset' : 'assets'}
+            </button>
+            {stoppedRun && stoppedRun.done < stoppedRun.total && (
+              <button type="button" onClick={resumeBatch} className="btn btn-quiet w-full">
+                <Play size={16} aria-hidden /> Resume ({formatCount(stoppedRun.total - stoppedRun.done)} left)
+              </button>
+            )}
+            {batchSize > CHUNK_SIZE && (
+              <p className="helper">Runs in {planChunks(batchSize).length} chunks of up to {CHUNK_SIZE} rows. Each chunk uploads before the next starts, so memory stays low.</p>
+            )}
+          </>
         )}
         <button
           type="button"
@@ -2840,16 +3098,42 @@ export function StudioGenerator({
             </DropdownMenuContent>
           </DropdownMenu>
           <button type="button" className="btn btn-primary" onClick={generateBatch} disabled={!contacts.length && !generating} title={!contacts.length ? 'Import a list first' : undefined}>
-            {generating ? <><Pause size={16} aria-hidden /> Stop</> : <><Wand2 size={16} aria-hidden /> Generate {batchSize || ''}</>}
+            {generating ? <><Pause size={16} aria-hidden /> Stop</> : <><Wand2 size={16} aria-hidden /> Generate {batchSize ? formatCount(batchSize) : ''}</>}
           </button>
         </div>
       </header>
 
       {generating && (
-        <div className="batch-progress" role="status" aria-live="polite">
-          <strong>Making {Math.min(progressDone + 1, progressTotal)} of {progressTotal}</strong>
+        <div className="batch-progress" role="status" aria-live="polite" data-testid="batch-progress">
+          <strong data-testid="chunk-progress">
+            {multiChunk && chunkInfo
+              ? chunkProgressLabel({ chunk: chunkInfo.chunk, chunks: chunkInfo.chunks, done: progressDone, total: progressTotal })
+              : `Making ${formatCount(Math.min(progressDone + 1, progressTotal))} of ${formatCount(progressTotal)}`}
+          </strong>
           <Progress value={progress} aria-label="Batch progress" className="h-2 flex-1 bg-fill [&>div]:bg-studio" />
-          <span className="text-sm text-muted-foreground tabular">{etaSeconds === null ? `${progress}%` : etaSeconds < 2 ? 'Almost done' : `About ${etaSeconds} seconds left`}{laneCount > 1 ? `, ${laneCount} at a time` : ''}</span>
+          <span className="text-sm text-muted-foreground tabular">{etaSeconds === null ? `${progress}%` : etaText(etaSeconds)}{laneCount > 1 ? `, ${laneCount} at a time` : ''}</span>
+          {multiChunk && chunkInfo && chunkCounts && (
+            <span className="batch-progress-chunk text-sm text-muted-foreground tabular" data-testid="chunk-status">
+              {chunkInfo.phase === 'uploading'
+                ? `Uploading chunk ${chunkInfo.chunk} before the next one starts…`
+                : `This chunk: ${formatCount(chunkCounts.done)} ready · ${formatCount(chunkCounts.working)} making · ${formatCount(chunkCounts.waiting)} waiting${chunkCounts.failed ? ` · ${formatCount(chunkCounts.failed)} failed` : ''}`}
+            </span>
+          )}
+          {heldInfo && overMemoryBudget(Math.max(heldInfo.held, heldInfo.projected)) && (
+            <span className="batch-progress-chunk text-sm text-warning" data-testid="memory-warning">
+              Holding ~{formatMegabytes(heldInfo.held)} in this tab{heldInfo.projected > heldInfo.held ? ` (~${formatMegabytes(heldInfo.projected)} by the end)` : ''}. {userId && supabaseConfigured ? 'Some files did not upload; download in ZIP parts.' : 'Sign in to upload each chunk, or Stop and download the ZIP in parts.'}
+            </span>
+          )}
+        </div>
+      )}
+      {!generating && stoppedRun && stoppedRun.done < stoppedRun.total && (
+        <div className="batch-progress" role="status" data-testid="batch-resume">
+          <strong>{formatCount(stoppedRun.done)} of {formatCount(stoppedRun.total)} rows finished</strong>
+          <span className="text-sm text-muted-foreground">Resume makes only the rows that are not finished. Finished rows keep their files and links.</span>
+          <span className="flex gap-2">
+            <button type="button" className="btn btn-primary" onClick={resumeBatch}><Play size={16} aria-hidden /> Resume</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setStoppedRun(null)}>Dismiss</button>
+          </span>
         </div>
       )}
 
@@ -3123,6 +3407,7 @@ export function StudioGenerator({
                 onCompress={compressWarnings}
                 onRetry={retryAsset}
                 onDelete={(asset) => void deleteAsset(asset)}
+                zipping={zipping}
               />
             ) : (
               <p className="helper">Generate first, then every image for this studio appears here.</p>
