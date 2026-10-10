@@ -1285,3 +1285,20 @@ body > div:last-child > span + img { display: inline !important; }
 .mock-dm-image { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; width: fit-content; }
 .mock-dm-image .inbox-image, .mock-dm-image .inbox-image-placeholder { border-radius: 0; border: 0; }
 .mock-dm-compose { margin: 0 12px 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); color: var(--muted-foreground); font-size: 13px; }
+
+/* How it works guide (components/studio/guide-sheet.tsx). */
+.guide-button { position: relative; }
+.guide-dot { position: absolute; top: 6px; right: 6px; width: 9px; height: 9px; border-radius: 999px; background: var(--primary); box-shadow: 0 0 0 2px var(--background); }
+.guide-sheet { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+.guide-head { display: flex; flex-direction: column; gap: 6px; padding: 24px 64px 16px 24px; border-bottom: 1px solid var(--border); }
+.guide-section { padding: 20px 24px 4px; }
+.guide-section h3 { margin-bottom: 12px; font-size: 15px; font-weight: 600; color: var(--foreground); }
+.guide-section p { color: var(--muted-foreground); font-size: 14px; line-height: 1.55; }
+.guide-section strong { display: block; font-size: 15px; font-weight: 600; line-height: 1.4; }
+.guide-steps { display: flex; flex-direction: column; gap: 14px; }
+.guide-steps li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 12px; align-items: start; }
+.guide-step-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 999px; background: var(--accent); color: var(--primary); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.guide-tips { display: flex; flex-direction: column; gap: 10px; }
+.guide-tips li { padding: 12px 14px; border-radius: 10px; background: var(--fill); }
+.guide-news { display: flex; flex-direction: column; gap: 8px; padding-left: 18px; list-style: disc; color: var(--foreground); font-size: 14px; line-height: 1.5; }
+.guide-news li::marker { color: var(--primary); }

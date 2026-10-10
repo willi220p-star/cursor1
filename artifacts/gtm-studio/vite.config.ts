@@ -35,6 +35,14 @@ export default defineConfig({
         server.httpServer?.once('listening', apply);
       },
     },
+    {
+      // Stamps the deployed commit into index.html so the post-deploy check can tell the new build is live.
+      name: 'build-meta',
+      transformIndexHtml() {
+        const sha = (process.env.VITE_COMMIT_SHA ?? '').trim() || 'dev';
+        return [{ tag: 'meta', attrs: { name: 'build', content: sha }, injectTo: 'head' }];
+      },
+    },
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),
