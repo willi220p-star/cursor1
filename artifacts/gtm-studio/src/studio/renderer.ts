@@ -1,13 +1,16 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
-import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
+import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands } from './types';
 import { renderMerge } from './merge';
 import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
 import { drawCaptionLayer, highlightWords } from './caption-draw';
 import { canvasCaptionMeasure, captionFont } from './caption-fit';
 import { loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
+import { badgeColorFor, faviconUrlFor, initialsFor, MIN_FAVICON_PX, rowPortraitSource } from './avatar-fallback';
+import { fitTypedNote, revealLines, TYPED_MIN_SCALE, typedLength, typedNoteBody, type TypedFit } from './typed-fit';
+import { GIF_TARGET_BYTES, gifPlanFor } from './gif-plan';
 
 export const dimensions = canvasSizes;
 
@@ -104,16 +107,14 @@ function drawImageCover(
   context.drawImage(image, sx, sy, sw, sh, x, y, width, height);
 }
 
+/**
+ * The portrait for a row. The Look tab's photo only stands in when no portrait column is chosen;
+ * with a column, a row without a portrait resolves to '' and gets a badge (see avatar-fallback).
+ */
 export function resolveAvatarSource(config: StudioConfig, contact: Contact) {
-  const cached = String(contact[AVATAR_CACHE_FIELD] ?? '').trim();
-  if (cached) return peekPortraitCache(cached) || publicAssetUrl(cached);
-  const fromColumn = config.avatarColumn ? String(contact[config.avatarColumn] ?? '').trim() : '';
-  if (fromColumn) return peekPortraitCache(fromColumn) || publicAssetUrl(fromColumn);
-  const stored = String(contact[AVATAR_SOURCE_FIELD] ?? '').trim();
-  if (stored) return peekPortraitCache(stored) || publicAssetUrl(stored);
-  const url = config.avatarUrl?.trim();
-  if (url) return peekPortraitCache(url) || publicAssetUrl(url);
-  return publicAssetUrl(config.avatarImage?.trim() || '');
+  const { source } = rowPortraitSource(config, contact);
+  if (!source) return '';
+  return peekPortraitCache(source) || publicAssetUrl(source);
 }
 
 export function resolveMessage(config: StudioConfig, contact: Contact) {
@@ -139,6 +140,40 @@ function clipAvatarShape(
   }
 }
 
+const faviconCache = new Map<string, Promise<HTMLImageElement | null>>();
+
+/** True when drawing this image keeps a canvas exportable (no cross-origin taint). */
+function exportSafe(image: HTMLImageElement) {
+  try {
+    const probe = document.createElement('canvas');
+    probe.width = 1;
+    probe.height = 1;
+    const context = probe.getContext('2d');
+    if (!context) return false;
+    context.drawImage(image, 0, 0, 1, 1);
+    context.getImageData(0, 0, 1, 1);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The company's site icon, or null when offline, slow (3 s), the generic globe, or not CORS-clean.
+ * Only loaded with CORS, so a canvas with it still exports.
+ */
+function loadFavicon(url: string) {
+  if (!url || typeof document === 'undefined') return Promise.resolve(null);
+  const cached = faviconCache.get(url);
+  if (cached) return cached;
+  const pending = Promise.race([
+    decodeHtmlImage(url, true),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000)),
+  ]).then((image) => (image && Math.min(image.naturalWidth, image.naturalHeight) >= MIN_FAVICON_PX && exportSafe(image) ? image : null));
+  faviconCache.set(url, pending);
+  return pending;
+}
+
 async function paintAvatarOnPaper(
   context: CanvasRenderingContext2D,
   config: StudioConfig,
@@ -160,22 +195,31 @@ async function paintAvatarOnPaper(
   if (image) {
     drawImageCover(context, image, x, y, w, h, config.avatarCrop ?? defaultCrop);
   } else {
-    const fill = context.createLinearGradient(x, y, x + w, y + h);
-    fill.addColorStop(0, '#d9b48a');
-    fill.addColorStop(1, '#8a5a32');
-    context.fillStyle = fill;
-    context.fillRect(x, y, w, h);
-    const initials = String(contact.first_name || contact.company || 'DG')
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((part) => part[0] ?? '')
-      .join('')
-      .toUpperCase();
-    context.fillStyle = '#fff8ee';
-    context.font = `700 ${Math.max(22, Math.min(w, h) * 0.28)}px "Space Grotesk", sans-serif`;
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(initials || '•', x + w / 2, y + h / 2);
+    const favicon = await loadFavicon(faviconUrlFor(config, contact));
+    if (favicon) {
+      // The company's site icon on a light tile, like a logo badge.
+      context.fillStyle = '#f6f3ee';
+      context.fillRect(x, y, w, h);
+      const side = Math.min(w, h) * 0.5;
+      context.imageSmoothingQuality = 'high';
+      context.drawImage(favicon, x + (w - side) / 2, y + (h - side) / 2, side, side);
+    } else {
+      // Initials on a colour picked from the company, so each account has its own badge.
+      const base = badgeColorFor(contact);
+      context.fillStyle = base;
+      context.fillRect(x, y, w, h);
+      const light = context.createRadialGradient(x + w * 0.3, y + h * 0.25, 0, x + w * 0.3, y + h * 0.25, Math.max(w, h));
+      light.addColorStop(0, 'rgba(255,255,255,0.22)');
+      light.addColorStop(1, 'rgba(255,255,255,0)');
+      context.fillStyle = light;
+      context.fillRect(x, y, w, h);
+      const initials = initialsFor(contact);
+      context.fillStyle = '#ffffff';
+      context.font = `700 ${Math.max(10 * scale, Math.min(w, h) * (initials.length > 1 ? 0.36 : 0.42))}px "Space Grotesk", sans-serif`;
+      context.textAlign = 'center';
+      context.textBaseline = 'middle';
+      context.fillText(initials || '•', x + w / 2, y + h / 2 + Math.min(w, h) * 0.02);
+    }
   }
   context.restore();
   context.save();
@@ -1344,6 +1388,52 @@ function drawHandwriting(
   return pen;
 }
 
+const DEFAULT_TEXT_ZONE = { x: 0.4, y: 0.14, width: 0.46, height: 0.7 };
+
+/** The whole letter for a row as typed on the card: copy, personal line, signature and P.S. */
+export function typedNoteText(config: StudioConfig, contact: Contact) {
+  return typedNoteBody({
+    copy: renderMerge(config.copy, contact, { hookColumn: config.hookColumn }),
+    message: config.showMessage === false ? '' : resolveMessage(config, contact),
+    signature: config.signature ? renderMerge(config.signature, contact) : '',
+    postscript: config.postscript ? renderMerge(config.postscript, contact) : '',
+  });
+}
+
+function typedFont(config: StudioConfig, size: number) {
+  return `500 ${size}px "${config.fontFamily || 'Space Grotesk'}", "Manrope", sans-serif`;
+}
+
+const typedFitCache = new Map<string, TypedFit>();
+
+/**
+ * Fits the row's letter into the text frame at full canvas size (scale 1), so the preview, the still and
+ * every GIF frame wrap the same words onto the same lines and only differ in scale.
+ */
+function fitTypedLetter(context: CanvasRenderingContext2D, config: StudioConfig, contact: Contact, options: { minScale?: number; fontSize?: number } = {}) {
+  const target = dimensions[config.channel] ?? dimensions.LinkedIn;
+  const zone = config.textZone ?? DEFAULT_TEXT_ZONE;
+  const text = typedNoteText(config, contact);
+  const fontSize = options.fontSize ?? config.fontSize;
+  const tracking = config.letterSpacing ?? 0;
+  const width = target.width * zone.width;
+  const height = target.height * zone.height;
+  const key = [config.fontFamily, fontSize, tracking, config.lineSpacing, width, height, options.minScale ?? '', text].join('|');
+  const cached = typedFitCache.get(key);
+  if (cached) return cached;
+  context.save();
+  context.letterSpacing = `${tracking}px`;
+  const measure = (line: string, size: number) => {
+    context.font = typedFont(config, size);
+    return context.measureText(line).width;
+  };
+  const fit = fitTypedNote({ text, width, height, fontSize, lineSpacing: config.lineSpacing || 1.45, measure, minScale: options.minScale });
+  context.restore();
+  if (typedFitCache.size > 400) typedFitCache.clear();
+  typedFitCache.set(key, fit);
+  return fit;
+}
+
 function drawTypedNote(
   context: CanvasRenderingContext2D,
   config: StudioConfig,
@@ -1353,43 +1443,39 @@ function drawTypedNote(
   scale: number,
   animationPhase = 1,
 ) {
-  const family = config.fontFamily || 'Space Grotesk';
-  const fontSize = Math.max(14, config.fontSize * scale);
-  const tracking = (config.letterSpacing ?? 0) * scale;
-  const zone = config.textZone ?? { x: 0.4, y: 0.14, width: 0.46, height: 0.7 };
-  const x = canvasWidth * zone.x;
-  const y = canvasHeight * zone.y;
-  const w = canvasWidth * zone.width;
-  const h = canvasHeight * zone.height;
-  const message = config.showMessage === false ? '' : resolveMessage(config, contact);
-  let body = [
-    renderMerge(config.copy, contact, { hookColumn: config.hookColumn }),
-    message,
-    config.signature ? renderMerge(config.signature, contact) : '',
-    config.postscript ? renderMerge(config.postscript, contact) : '',
-  ].filter(Boolean).join('\n\n');
+  const fit = fitTypedLetter(context, config, contact);
+  const fontSize = fit.fontSize;
+  const zone = config.textZone ?? DEFAULT_TEXT_ZONE;
+  // Everything below is in full-size canvas units; the transform scales it to this canvas.
+  const unitW = canvasWidth / scale;
+  const unitH = canvasHeight / scale;
+  const x = unitW * zone.x;
+  const y = unitH * zone.y;
+  const w = unitW * zone.width;
+  const h = unitH * zone.height;
   const motion = config.textMotion ?? 'still';
-  const typing = motion === 'type';
+  let lines = fit.lines;
   let caretOn = false;
-  if (typing) {
+  if (motion === 'type') {
     const t = Math.max(0, Math.min(1, animationPhase / 0.86));
-    body = body.slice(0, Math.floor(body.length * t));
+    lines = revealLines(fit.lines, Math.floor(typedLength(fit.lines) * t));
     caretOn = t < 0.98 || Math.sin(animationPhase * Math.PI * 10) > 0;
   }
   context.save();
+  context.scale(scale, scale);
   context.beginPath();
   context.rect(x, y, w, h);
   context.clip();
   context.fillStyle = config.inkColor || '#1c1612';
   context.textBaseline = 'top';
   context.textAlign = 'left';
-  context.font = `500 ${fontSize}px "${family}", "Manrope", sans-serif`;
-  if (tracking) context.letterSpacing = `${tracking}px`;
+  context.font = typedFont(config, fontSize);
+  context.letterSpacing = `${config.letterSpacing ?? 0}px`;
   if (motion === 'glow') {
     context.shadowColor = '#f2c14e';
-    context.shadowBlur = 6 + 16 * Math.abs(Math.sin(animationPhase * Math.PI * 2));
+    // Shadow blur ignores the transform, so scale it by hand.
+    context.shadowBlur = (6 + 16 * Math.abs(Math.sin(animationPhase * Math.PI * 2))) * scale;
   }
-  const lines = wrapLines(context, body, w);
   const lineHeight = fontSize * (config.lineSpacing || 1.45);
   const markerColor = colorWithAlpha(config.layers[0]?.highlightColor || '#ffe566', 0.78);
   const needles = expandHighlightNeedles((config.layers[0]?.highlight) || '', contact);
@@ -1413,7 +1499,8 @@ function drawTypedNote(
       }
     }
     context.fillStyle = config.inkColor || '#1c1612';
-    context.fillText(line, x, lineY, w);
+    // No max width: lines are wrapped to fit, never squeezed sideways.
+    context.fillText(line, x, lineY);
   });
   if (caretOn) {
     const last = lines[lines.length - 1] ?? '';
@@ -1449,9 +1536,16 @@ async function ensureArtefactTypefaces(config: StudioConfig) {
 
 /**
  * How a note fits its paper for one row, without drawing it: the size used and rows needed vs available.
- * Returns null for studios that are not handwriting.
+ * Avatar cards report the typed letter's fit in its text frame. Returns null for the other studios.
  */
 export async function measureNoteFit(config: StudioConfig, contact: Contact) {
+  if (config.mode === 'avatar') {
+    await ensureArtefactTypefaces(config);
+    const context = document.createElement('canvas').getContext('2d');
+    if (!context) return null;
+    const fit = fitTypedLetter(context, config, contact);
+    return { fontSize: fit.fontSize, needed: fit.needed, available: fit.available, chosen: fit.chosen, fontScale: 1, fits: fit.fits };
+  }
   if (config.mode !== 'handwritten' && config.mode !== 'handgif') return null;
   await ensureArtefactTypefaces(config);
   const target = dimensions[config.channel] ?? dimensions.LinkedIn;
@@ -1465,6 +1559,24 @@ export async function measureNoteFit(config: StudioConfig, contact: Contact) {
   const paper = { paperX: target.width * zone.x, paperY: target.height * zone.y, paperW: target.width * zone.width, paperH: target.height * zone.height };
   const fit = fitHandwritingGrid(context, config, contact, fontFamily, paper, 1, Boolean(config.signatureImage));
   return { fontSize: fit.fontSize, needed: fit.needed, available: fit.available, chosen: fit.chosen, fontScale: handwritingScale(fontFamily), firstBaseline: fit.grid.firstBaseline, step: fit.grid.step };
+}
+
+/**
+ * Avatar rows whose letter still overflows the text frame at the smallest size it may shrink to
+ * (TYPED_MIN_SCALE of the set size). Those rows lose their last lines, so the studio flags them.
+ */
+export async function typedNoteOverflowRows(contacts: Contact[], configFor: (contact: Contact) => StudioConfig) {
+  if (!contacts.length) return [];
+  await ensureArtefactTypefaces(configFor(contacts[0]));
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return [];
+  return contacts.flatMap((contact, index) => {
+    const config = configFor(contact);
+    if (config.mode !== 'avatar') return [];
+    const floor = config.fontSize * TYPED_MIN_SCALE;
+    const fit = fitTypedLetter(context, config, contact, { fontSize: floor, minScale: 1 });
+    return fit.fits ? [] : [{ index, row: Number(contact.row) || index + 1 }];
+  });
 }
 
 /** A ballpoint lying on the desk, resting across the card's lower right corner. */
@@ -1589,7 +1701,7 @@ export async function renderStudioCanvas(
   contact: Contact,
   scale = 1,
   animationPhase = 1,
-  options: { omitText?: boolean; omitImage?: boolean; omitAvatar?: boolean } = {},
+  options: { omitText?: boolean; omitImage?: boolean; omitAvatar?: boolean; omitHand?: boolean } = {},
 ) {
   await ensureArtefactTypefaces(config);
   const target = dimensions[config.channel] ?? dimensions.LinkedIn;
@@ -1735,7 +1847,7 @@ export async function renderStudioCanvas(
       }
     }
     context.restore();
-    if (pen.show && writingHand) {
+    if (pen.show && writingHand && !options.omitHand) {
       drawWritingHandPhoto(
         context,
         writingHand,
@@ -1914,39 +2026,54 @@ export async function renderPreview(
   context?.drawImage(source, 0, 0);
 }
 
+export type GifRender = {
+  blob: Blob;
+  /** JPG of the finished frame at full export size, when asked for. */
+  still?: Blob;
+  /** Set when the encoder had to shrink the GIF to fit the size target. */
+  note?: string;
+};
+
 export async function renderGifAsset(config: StudioConfig, contact: Contact, signal?: AbortSignal) {
-  const avatarAnim = config.mode === 'avatar' && (config.textMotion ?? 'still') !== 'still';
-  const writing = config.mode === 'handgif'
-    || avatarAnim
-    || (config.layers ?? []).some((layer) => (layer.animation ?? 'still') !== 'still');
-  const speed = writingSpeedSpec(config.writingSpeed);
-  const previewScale = writing && (config.mode === 'handgif' || config.mode === 'avatar')
-    ? Math.min(0.4, 0.26 + config.gifQuality * 0.018)
-    : Math.min(0.68, 0.34 + config.gifQuality * 0.035);
-  const { width, height } = dimensions[config.channel] ?? dimensions.LinkedIn;
-  const frameWidth = Math.round(width * previewScale);
-  const frameHeight = Math.round(height * previewScale);
-  const frames: ArrayBuffer[] = [];
+  return (await renderGifWithStill(config, contact, { signal })).blob;
+}
+
+/**
+ * Renders every frame from the GIF plan (see gif-plan.ts), encodes them in the worker and, with `still`, also
+ * draws the finished frame at full size as a JPG poster for inboxes that do not play GIFs.
+ */
+export async function renderGifWithStill(
+  config: StudioConfig,
+  contact: Contact,
+  options: { signal?: AbortSignal; still?: boolean } = {},
+): Promise<GifRender> {
+  const { signal } = options;
+  const plan = gifPlanFor(config);
   const sourceFrames = config.gifFrames?.length ? config.gifFrames.slice(0, 36) : undefined;
-  const frameCount = sourceFrames?.length ?? (config.mode === 'handgif' ? speed.frames : avatarAnim ? 16 : writing ? 10 : 12);
+  const configFor = (source?: number) => (sourceFrames && source !== undefined ? { ...config, customImage: sourceFrames[source] } : config);
+  const frames: ArrayBuffer[] = [];
   const delays: number[] = [];
-  for (let index = 0; index < frameCount; index++) {
+  // The poster beat and the end hold are the same picture: draw it once.
+  const drawn = new Map<string, ArrayBuffer>();
+  for (const spec of plan.frames) {
     if (signal?.aborted) throw new DOMException('Generation cancelled', 'AbortError');
-    const linear = frameCount === 1 ? 1 : index / (frameCount - 1);
-    const hold = writing && index >= frameCount - 2;
-    const phase = hold ? 1 : linear;
-    const frameConfig = sourceFrames ? { ...config, customImage: sourceFrames[index] } : config;
-    const canvas = await renderStudioCanvas(frameConfig, contact, previewScale, phase);
-    const data = canvas.getContext('2d')?.getImageData(0, 0, frameWidth, frameHeight);
-    if (!data) throw new Error('Could not prepare GIF frame.');
-    frames.push(data.data.buffer);
-    const tick = config.mode === 'handgif'
-      ? Math.round(speed.ms / Math.max(1, frameCount))
-      : Math.round(1000 / Math.max(6, config.gifFps));
-    delays.push(config.gifDelays?.[index] ?? (hold ? Math.max(400, tick * 4) : tick));
+    const key = `${spec.source ?? ''}:${spec.phase}:${spec.finished ? 1 : 0}`;
+    let pixels = drawn.get(key);
+    if (!pixels) {
+      const canvas = await renderStudioCanvas(configFor(spec.source), contact, plan.scale, spec.phase, { omitHand: spec.finished });
+      const data = canvas.getContext('2d')?.getImageData(0, 0, plan.width, plan.height);
+      if (!data) throw new Error('Could not prepare GIF frame.');
+      pixels = data.data.buffer;
+      drawn.set(key, pixels);
+    }
+    frames.push(frames.includes(pixels) ? pixels.slice(0) : pixels);
+    delays.push(spec.delay);
   }
+  const stillPromise = options.still
+    ? renderStudioCanvas(configFor(sourceFrames ? 0 : undefined), contact, 1, 1, { omitHand: true }).then((canvas) => canvasToBlob(canvas, 'image/jpeg', 0.86))
+    : undefined;
   const worker = new Worker(new URL('./gif.worker.ts', import.meta.url), { type: 'module' });
-  return await new Promise<Blob>((resolve, reject) => {
+  const encoded = await new Promise<{ blob: Blob; note?: string }>((resolve, reject) => {
     const abort = () => {
       worker.terminate();
       reject(new DOMException('Generation cancelled', 'AbortError'));
@@ -1956,7 +2083,7 @@ export async function renderGifAsset(config: StudioConfig, contact: Contact, sig
       signal?.removeEventListener('abort', abort);
       worker.terminate();
       if (!event.data.ok) reject(new Error(event.data.error));
-      else resolve(new Blob([event.data.bytes], { type: 'image/gif' }));
+      else resolve({ blob: new Blob([event.data.bytes], { type: 'image/gif' }), note: event.data.note || undefined });
     };
     worker.onerror = () => {
       signal?.removeEventListener('abort', abort);
@@ -1964,14 +2091,16 @@ export async function renderGifAsset(config: StudioConfig, contact: Contact, sig
       reject(new Error('GIF worker failed.'));
     };
     worker.postMessage({
-      width: frameWidth,
-      height: frameHeight,
+      width: plan.width,
+      height: plan.height,
       delays,
       loop: config.gifLoop,
-      colors: config.gifQuality >= 8 ? 256 : config.gifQuality >= 5 ? 128 : 64,
+      colors: plan.colors,
       frames,
+      maxBytes: config.gifKeepUnder1Mb === false ? undefined : GIF_TARGET_BYTES,
     }, frames);
   });
+  return { ...encoded, still: stillPromise ? await stillPromise : undefined };
 }
 
 export function modeLabel(mode: StudioMode) {

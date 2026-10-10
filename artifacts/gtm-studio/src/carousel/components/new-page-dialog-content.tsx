@@ -1,4 +1,4 @@
-import { Button } from "@/carousel/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -7,9 +7,9 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/carousel/components/ui/dialog";
-import { Input } from "@/carousel/components/ui/input";
-import { Label } from "@/carousel/components/ui/label";
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { SlideType } from "@/carousel/lib/validation/slide-schema";
 import { Plus, X } from "lucide-react";
 

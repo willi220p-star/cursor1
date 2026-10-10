@@ -187,14 +187,44 @@ export function guessAvatarColumn(columns: string[], rows: Array<Record<string, 
   return ranked[0]?.column ?? guessColumn(columns, avatarColumnAliases);
 }
 
+/** Where the portrait sits on an avatar card: left of the letter, or on top with the letter below. */
+export type AvatarLayout = 'side' | 'stacked';
+
+/** Tall and square canvases stack the portrait over the letter so the text column keeps its width. */
+export function defaultAvatarLayout(channel: CanvasSize): AvatarLayout {
+  const { width, height } = canvasSizes[channel];
+  return height >= width * 0.95 ? 'stacked' : 'side';
+}
+
+/** The layout a config uses. Looks saved before the stacked layout existed are portrait-left. */
+export function avatarLayoutOf(config: Pick<StudioConfig, 'avatarLayout'>): AvatarLayout {
+  return config.avatarLayout === 'stacked' ? 'stacked' : 'side';
+}
+
 export function avatarInNoteLayout(
   channel: CanvasSize,
   avatarWidth = 0.24,
   note: CanvasZone = { x: 0.07, y: 0.07, width: 0.86, height: 0.86 },
+  layout: AvatarLayout = 'side',
 ): { note: CanvasZone; avatar: CanvasZone; text: CanvasZone } {
   const { width, height } = canvasSizes[channel];
   const padX = note.width * 0.05;
   const padY = note.height * 0.06;
+  const gap = 0.028;
+  if (layout === 'stacked') {
+    // Portrait on top (a square in pixels), the letter below it across the full width of the paper.
+    const aw = Math.min(note.width * 0.4, (note.height * 0.4 * height) / width, Math.max(0.14, avatarWidth));
+    const ah = aw * (width / height);
+    const avatar: CanvasZone = { x: note.x + padX, y: note.y + padY, width: aw, height: ah };
+    const textY = avatar.y + ah + gap * (width / height);
+    const text: CanvasZone = {
+      x: note.x + padX,
+      y: textY,
+      width: Math.max(0.2, note.width - padX * 2),
+      height: Math.max(0.2, note.y + note.height - padY - textY),
+    };
+    return { note, avatar, text };
+  }
   const aw = Math.min(note.width * 0.4, Math.max(0.14, avatarWidth));
   const ah = Math.min(aw * (width / height), note.height - padY * 2);
   const avatar: CanvasZone = {
@@ -203,7 +233,6 @@ export function avatarInNoteLayout(
     width: aw,
     height: ah,
   };
-  const gap = 0.028;
   const textX = avatar.x + avatar.width + gap;
   const text: CanvasZone = {
     x: textX,
@@ -250,7 +279,7 @@ export const textAnims: { id: TextAnim; label: string; hint: string }[] = [
 ];
 
 export const textMotions: { id: TextMotion; label: string; hint: string }[] = [
-  { id: 'still', label: 'None', hint: 'Still letter. Download is a PNG.' },
+  { id: 'still', label: 'None', hint: 'Still letter. Download is a JPG (or PNG, picked in Ship).' },
   { id: 'type', label: 'Auto writing', hint: 'Portrait stays. The letter types in. Download is a GIF.' },
   { id: 'glow', label: 'Glow', hint: 'The letter pulses. Portrait stays.' },
   { id: 'highlight', label: 'Highlight', hint: 'A marker wipes onto the words you list. Leave the list empty to mark every line.' },
@@ -434,9 +463,9 @@ export const stillFormats: { id: StillFormat; label: string; hint: string }[] = 
   { id: 'png', label: 'Full PNG', hint: 'Lossless, often over 1 MB. Use for print or when size does not matter.' },
 ];
 
-/** The file type a still export uses: notes go out as email-sized JPGs unless PNG is chosen. */
+/** The file type a still export uses: notes and avatar cards go out as email-sized JPGs unless PNG is chosen. */
 export function stillFormatFor(config: Pick<StudioConfig, 'mode' | 'imageFormat'>): StillFormat {
-  return config.imageFormat ?? (config.mode === 'handwritten' ? 'jpg' : 'png');
+  return config.imageFormat ?? (config.mode === 'handwritten' || config.mode === 'avatar' ? 'jpg' : 'png');
 }
 
 export type StudioConfig = {
@@ -474,7 +503,7 @@ export type StudioConfig = {
   handwritingKind: HandwritingKind;
   /** Notes: grow short notes to fill the card (long notes always shrink to fit). Default on. */
   autoFit?: boolean;
-  /** Still exports: small JPG for email, or full-quality PNG. Notes default to JPG. */
+  /** Still exports: small JPG for email, or full-quality PNG. Notes and avatar cards default to JPG. */
   imageFormat?: StillFormat;
   /** Inbox preview: email subject and first body line shown around the image. Merge tags allowed. */
   emailSubject?: string;
@@ -491,6 +520,8 @@ export type StudioConfig = {
   gifFps: number;
   gifLoop: number;
   gifQuality: number;
+  /** Keep each GIF under 1 MB: an oversized first encode is redone once with fewer colours or a smaller frame. Unset means on. */
+  gifKeepUnder1Mb?: boolean;
   websiteColumn?: string;
   avatarColumn?: string;
   messageColumn?: string;
@@ -505,6 +536,8 @@ export type StudioConfig = {
   avatarImage?: string;
   avatarUrl?: string;
   avatarShape: AvatarShape;
+  /** Avatar cards: portrait left of the letter or on top of it. Unset (older looks): left. */
+  avatarLayout?: AvatarLayout;
   message: string;
   showMessage: boolean;
   imageCrop: CropFocus;
@@ -522,7 +555,14 @@ export type StudioConfig = {
   listSource?: string;
   sourceColumns?: string[];
   sourceFileUrl?: string;
+  /** Agency client this campaign is for. Free text; the Library filters and searches on it. */
+  client?: string;
+  /** Generated, uploaded and exported runs, oldest first (see campaign-status.ts). */
+  history?: CampaignEvent[];
 };
+
+export type CampaignEventKind = 'generated' | 'uploaded' | 'exported';
+export type CampaignEvent = { at: string; kind: CampaignEventKind; rows: number };
 
 export type SavedTemplate = {
   id: string;
@@ -549,6 +589,10 @@ export type GeneratedAsset = {
   uploadError?: string;
   mode?: StudioMode;
   createdAt?: string;
+  /** JPG of the finished frame that goes with a GIF, for inboxes that only show the first frame or block GIFs. */
+  still?: { blob: Blob; url: string; filename: string; publicUrl?: string };
+  /** What the encoder did to this file, e.g. a re-encode to stay under the size target. */
+  note?: string;
 };
 
 export type SavedCampaign = {

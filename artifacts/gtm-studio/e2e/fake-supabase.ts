@@ -3,18 +3,73 @@ import type { BrowserContext, Page } from '@playwright/test';
 export const userId = '00000000-0000-4000-8000-000000000001';
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'operator@dgk.internal', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
 
-export type FakeOptions = { signedIn?: boolean; failLists?: boolean; contacts?: Record<string, unknown>[]; mode?: string };
+export type FakeOptions = {
+  signedIn?: boolean;
+  failLists?: boolean;
+  contacts?: Record<string, unknown>[];
+  mode?: string;
+  /** Rows served for GET /rest/v1/outbound_campaigns (filtered by `id=eq.` when asked). Saves are added. */
+  campaigns?: Record<string, unknown>[];
+  /** Rows served for GET /rest/v1/outbound_folders. */
+  folders?: Record<string, unknown>[];
+};
 
-/** Answers every Supabase call locally: an operator session, empty tables and accepted uploads. */
+export type FakeRequest = { method: string; table: string; url: string; body: unknown };
+
+/**
+ * Answers every Supabase call locally: an operator session, empty tables (or the given campaign
+ * and folder rows) and accepted uploads. Every write is recorded in `requests`.
+ */
 export async function fakeSupabase(context: BrowserContext, options: FakeOptions = {}) {
   const { signedIn = true, failLists = false, contacts, mode } = options;
+  const campaigns = [...(options.campaigns ?? [])];
+  const folders = options.folders ?? [];
+  const requests: FakeRequest[] = [];
   await context.route(/supabase\.co/, (route) => {
-    const url = route.request().url();
+    const request = route.request();
+    const url = request.url();
+    const method = request.method();
     if (url.includes('/auth/v1/user')) return route.fulfill({ json: user });
     if (url.includes('/storage/v1/')) return route.fulfill({ json: { Key: 'ok' } });
     if (url.includes('/rest/v1/')) {
+      const table = new URL(url).pathname.split('/rest/v1/')[1]?.split('/')[0] ?? '';
+      let body: unknown = null;
+      try {
+        body = request.postDataJSON();
+      } catch {
+        body = request.postData();
+      }
+      if (method !== 'GET' && method !== 'HEAD') requests.push({ method, table, url, body });
       // 500 is not retried by the Supabase client, so the error shows at once.
-      if (failLists && route.request().method() === 'GET') return route.fulfill({ status: 500, json: { message: 'Internal error' } });
+      if (failLists && method === 'GET') return route.fulfill({ status: 500, json: { message: 'Internal error' } });
+      const wantsObject = (request.headers().accept ?? '').includes('vnd.pgrst.object');
+      if (table === 'outbound_campaigns') {
+        if (method === 'GET') {
+          const id = new URL(url).searchParams.get('id')?.replace(/^eq\./, '');
+          const rows = id ? campaigns.filter((row) => row.id === id) : campaigns;
+          return route.fulfill({ json: wantsObject ? rows[0] ?? null : rows });
+        }
+        if (method === 'POST' && body && typeof body === 'object') {
+          const saved = { folder_id: null, ...(body as Record<string, unknown>) };
+          const index = campaigns.findIndex((row) => row.id === saved.id);
+          if (index >= 0) campaigns[index] = saved;
+          else campaigns.unshift(saved);
+          return route.fulfill({ json: wantsObject ? { id: saved.id } : [{ id: saved.id }] });
+        }
+        if (method === 'PATCH' && body && typeof body === 'object') {
+          const id = new URL(url).searchParams.get('id')?.replace(/^eq\./, '');
+          const index = campaigns.findIndex((row) => row.id === id);
+          if (index >= 0) campaigns[index] = { ...campaigns[index], ...(body as Record<string, unknown>) };
+          return route.fulfill({ json: [] });
+        }
+        if (method === 'DELETE') {
+          const id = new URL(url).searchParams.get('id')?.replace(/^eq\./, '');
+          const index = campaigns.findIndex((row) => row.id === id);
+          if (index >= 0) campaigns.splice(index, 1);
+          return route.fulfill({ json: [] });
+        }
+      }
+      if (table === 'outbound_folders' && method === 'GET') return route.fulfill({ json: folders });
       return route.fulfill({ json: [] });
     }
     return route.fulfill({ json: {} });
@@ -31,6 +86,24 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // Storage blocked; the app still renders signed out.
     }
   }, [signedIn, JSON.stringify(session), mode ? `gtm-contacts:${userId}:${mode}` : '', contacts ? JSON.stringify(contacts) : ''] as const);
+  return { requests, campaigns };
+}
+
+/** A saved campaign row as Supabase returns it. */
+export function campaignRow(id: string, name: string, { config, ...extra }: Record<string, unknown> = {}) {
+  const contacts = sampleContacts(3);
+  return {
+    id,
+    user_id: userId,
+    name,
+    mode: 'handwritten',
+    config: { mode: 'handwritten', campaignName: name, copy: 'Hi {first_name}', ...(config as object | undefined) },
+    source_columns: ['name', 'company', 'role', 'handwritten_url', 'handwritten_status'],
+    source_data: contacts.map((row) => ({ ...row, handwritten_url: `https://e2e-test.supabase.co/storage/v1/object/public/outbound-assets/${userId}/x/${row.row}.jpg`, handwritten_status: 'uploaded' })),
+    updated_at: '2026-10-09T12:00:00Z',
+    folder_id: null,
+    ...extra,
+  };
 }
 
 export function collectErrors(page: Page) {

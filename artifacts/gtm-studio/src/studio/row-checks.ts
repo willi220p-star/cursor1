@@ -51,3 +51,22 @@ export function checkRows(rows: Contact[], copy: string, options: MergeOptions =
 export function describeIssue(issue: RowIssue) {
   return `Row ${issue.row}: ${issue.problems.join(', ')}`;
 }
+
+export type RowRef = { index: number; row: number };
+export type RowWarning = RowRef & { problems: string[] };
+
+/**
+ * Avatar card rows that will not look as planned, merged per row in list order: no portrait (the card
+ * gets an initials or site-icon badge instead) and a letter too long for its frame even at the smallest size.
+ */
+export function avatarRowWarnings(missingPortrait: RowRef[], overflowing: RowRef[]): RowWarning[] {
+  const byIndex = new Map<number, RowWarning>();
+  const add = (ref: RowRef, problem: string) => {
+    const entry = byIndex.get(ref.index) ?? { ...ref, problems: [] };
+    entry.problems.push(problem);
+    byIndex.set(ref.index, entry);
+  };
+  missingPortrait.forEach((ref) => add(ref, 'no portrait'));
+  overflowing.forEach((ref) => add(ref, 'letter cut off'));
+  return [...byIndex.values()].sort((a, b) => a.index - b.index);
+}

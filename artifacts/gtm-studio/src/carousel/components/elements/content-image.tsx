@@ -16,6 +16,13 @@ import {
   ElementFieldPath,
 } from "@/carousel/lib/document-form-types";
 
+// Drawn locally so an empty image slot never depends on a placeholder service.
+const IMAGE_PLACEHOLDER =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="200" viewBox="0 0 400 200"><rect width="400" height="200" fill="#e5e5e5"/><path d="M170 120l20-24 16 18 12-14 22 20z" fill="#a3a3a3"/><circle cx="182" cy="82" r="8" fill="#a3a3a3"/><text x="200" y="160" font-family="sans-serif" font-size="13" fill="#737373" text-anchor="middle">Add an image in Style</text></svg>'
+  );
+
 export function ContentImage({
   fieldName,
   className,
@@ -30,7 +37,7 @@ export function ContentImage({
   const { setCurrentPage } = usePagerContext();
   const { currentSelection, setCurrentSelection } = useSelectionContext();
   const pageNumber = getSlideNumber(fieldName);
-  const source = image.source.src || "https://placehold.co/400x200";
+  const source = image.source.src || IMAGE_PLACEHOLDER;
 
   // TODO: Convert to Toggle to make it accessible. Control with selection
 

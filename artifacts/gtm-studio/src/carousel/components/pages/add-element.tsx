@@ -1,5 +1,5 @@
-import { Button } from "@/carousel/components/ui/button";
-import { Dialog, DialogTrigger } from "@/carousel/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogTrigger } from "@/components/ui/dialog";
 import { Plus } from "lucide-react";
 import { getSlideNumber } from "@/carousel/lib/field-path";
 import { useFormContext } from "react-hook-form";
@@ -23,7 +23,7 @@ export function AddElement({
       <DialogTrigger asChild>
         <Button
           id={"add-element-" + pageNumber}
-          className="border-dashed border-2 w-full bg-transparent h-10"
+          className="border-dashed border-2 w-full bg-transparent h-10 border-neutral-400 text-neutral-500"
           variant={"outline"}
         >
           <div className={`flex flex-col justify-center items-center`}>

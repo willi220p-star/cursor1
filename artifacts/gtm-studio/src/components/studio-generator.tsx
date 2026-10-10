@@ -33,7 +33,7 @@ import {
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { useLocation } from 'wouter';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -64,7 +64,7 @@ import {
   dimensions,
   isLiveGif,
   modeLabel,
-  renderGifAsset,
+  renderGifWithStill,
   renderPreview,
   renderStaticAsset,
   resolveAvatarSource,
@@ -75,7 +75,9 @@ import {
   usesPhotoMotion,
   usesTextAnim,
 } from '@/studio/renderer';
+import { gifEstimateFor, gifStillFilename } from '@/studio/gif-plan';
 import {
+  appendCampaignHistory,
   copyTemplateConfig,
   ensureAssetBlob,
   listStudioAssets,
@@ -97,8 +99,11 @@ import { OpenerLibrary } from '@/components/studio/opener-library';
 import { VariantBControls } from '@/components/studio/variant-b-controls';
 import { FirstTouchNote } from '@/components/studio/first-touch-note';
 import { configForRow, rowVariant } from '@/studio/variants';
+import { pushHistory } from '@/studio/campaign-status';
+import { planRegeneration, type RegenerationPlan } from '@/studio/row-hash';
 import { HookControls } from '@/components/studio/hook-controls';
 import { AudiencePicker } from '@/components/studio/audience-picker';
+import { AvatarRowChecks } from '@/components/studio/avatar-row-checks';
 import { wordTargetFor } from '@/studio/audience';
 import {
   contactsStorageKey,
@@ -112,6 +117,8 @@ import {
   AVATAR_CACHE_FIELD,
   AVATAR_SOURCE_FIELD,
   avatarInNoteLayout,
+  avatarLayoutOf,
+  defaultAvatarLayout,
   canvasSizes,
   clampZoneInside,
   cropLayerStyle,
@@ -139,6 +146,7 @@ import {
   textAnims,
   textMotions,
   typedFonts,
+  type AvatarLayout,
   type AvatarShape,
   type CanvasSize,
   type Contact,
@@ -397,6 +405,7 @@ export function StudioGenerator({
   const [activeCanvasZone, setActiveCanvasZone] = useState<ZoneKind>('note');
   const [cropMode, setCropMode] = useState<'off' | 'image' | 'avatar'>('off');
   const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [regenPlan, setRegenPlan] = useState<RegenerationPlan | null>(null);
   const [progress, setProgress] = useState(0);
   const [progressDone, setProgressDone] = useState(0);
   const [progressTotal, setProgressTotal] = useState(0);
@@ -457,15 +466,18 @@ export function StudioGenerator({
   );
   const [noteFit, setNoteFit] = useState<NoteFitInfo | null>(null);
   useEffect(() => {
-    if (mode !== 'handwritten' && mode !== 'handgif') return;
+    if (mode !== 'handwritten' && mode !== 'handgif' && mode !== 'avatar') return;
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void measureNoteFit(config, contact).then((fit) => { if (!cancelled) setNoteFit(fit); }).catch(() => undefined);
+      void measureNoteFit(rowConfig, contact).then((fit) => { if (!cancelled) setNoteFit(fit); }).catch(() => undefined);
     }, 250);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [config, contact, mode]);
-  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
-  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit, wordTargetFor(config));
+  }, [rowConfig, contact, mode]);
+  // Avatar cards also type the personal line from the message column.
+  const typedMessage = mode === 'avatar' && config.showMessage !== false ? ` ${resolveMessage(config, contact)}` : '';
+  const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)}${typedMessage} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
+  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit, wordTargetFor(config), mode === 'avatar' ? 'typed' : 'handwritten');
+  const configFor = useCallback((row: Contact) => configForRow(config, row), [config]);
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
   const animatedExport = exportIsAnimated(mode, config);
@@ -1296,7 +1308,7 @@ export function StudioGenerator({
     setConfig((current) => {
       const note = cardZone(finish, current.cardFill);
       if (mode === 'avatar') {
-        const layout = avatarInNoteLayout(current.channel, current.avatarZone.width, note);
+        const layout = avatarInNoteLayout(current.channel, current.avatarZone.width, note, avatarLayoutOf(current));
         return { ...current, finish, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text };
       }
       return { ...current, finish, noteZone: note };
@@ -1456,20 +1468,25 @@ export function StudioGenerator({
   const renderOne = async (current: Contact, signal?: AbortSignal, lane = 0) => {
     const extension = exportExtension(mode, config);
     const forRow = configForRow(config, current);
-    const blob = exportIsAnimated(mode, config)
-      ? await renderGifAsset(forRow, current, signal)
+    const filename = safeFilename(config.filename, current, extension);
+    // A GIF also gets a JPG of its finished frame, for inboxes that only show the first frame or block GIFs.
+    const gif = exportIsAnimated(mode, config) ? await renderGifWithStill(forRow, current, { signal, still: true }) : null;
+    const blob = gif
+      ? gif.blob
       : mode === 'handwritten' || mode === 'avatar'
         ? await renderStaticAsset(forRow, current)
         : await staticWorker(lane).render(forRow, current);
     return {
       id: crypto.randomUUID(),
       row: current.row,
-      filename: safeFilename(config.filename, current, extension),
+      filename,
       blob,
       url: URL.createObjectURL(blob),
       bytes: blob.size,
       selected: true,
       status: blob.size > 200_000 ? 'warning' : 'ready',
+      ...(gif?.still ? { still: { blob: gif.still, url: URL.createObjectURL(gif.still), filename: gifStillFilename(filename) } } : {}),
+      ...(gif?.note ? { note: gif.note } : {}),
     } as GeneratedAsset;
   };
 
@@ -1479,7 +1496,7 @@ export function StudioGenerator({
     cancelRef.current = false;
     const controller = new AbortController();
     batchControllerRef.current = controller;
-    if (!keep.length) assets.forEach((asset) => URL.revokeObjectURL(asset.url));
+    if (!keep.length) assets.forEach((asset) => { URL.revokeObjectURL(asset.url); if (asset.still?.url) URL.revokeObjectURL(asset.still.url); });
     const batchContacts = contacts.slice(0, 400);
     const keptRows = new Set(keep.map((asset) => asset.row));
     const todo = batchContacts.filter((contact) => !keptRows.has(contact.row));
@@ -1543,7 +1560,8 @@ export function StudioGenerator({
       toast.success(`${generated.length} assets ready for review${contacts.length > 400 ? ' (first 400 rows)' : ''}`);
     }
     try {
-      const stamped = await writeBackOutputs(generated);
+      const made = generated.filter((asset) => asset.status !== 'failed').length;
+      const stamped = await writeBackOutputs(generated, contacts, false, made ? [{ kind: 'generated', rows: made }] : []);
       if (!cancelRef.current && generated.some((asset) => asset.status !== 'failed')) setReviewOpen(true);
       return { generated, contacts: stamped };
     } finally {
@@ -1551,9 +1569,15 @@ export function StudioGenerator({
     }
   };
 
-  const writeBackOutputs = async (generated: GeneratedAsset[], rows = contacts, quiet = false) => {
+  const writeBackOutputs = async (
+    generated: GeneratedAsset[],
+    rows = contacts,
+    quiet = false,
+    events: Array<{ kind: 'generated' | 'uploaded' | 'exported'; rows: number }> = [],
+  ) => {
     if (!generated.length) return rows;
     let nextAssets = generated;
+    let uploadedCount = 0;
     const uploadable = generated.filter((asset) => asset.status !== 'failed' && asset.blob.size && !asset.publicUrl);
     if (userId && supabaseConfigured && uploadable.length) {
       try {
@@ -1569,6 +1593,7 @@ export function StudioGenerator({
         const byId = new Map(uploaded.map((asset) => [asset.id, asset]));
         nextAssets = generated.map((asset) => byId.get(asset.id) ?? asset);
         const failedUploads = uploaded.filter((asset) => asset.uploadStatus === 'failed').length;
+        uploadedCount = uploaded.length - failedUploads;
         if (failedUploads) {
           toast(`${failedUploads} files stayed local`, { description: 'Filenames are on the list. Retry Save if the upload failed.' });
         }
@@ -1585,7 +1610,11 @@ export function StudioGenerator({
       return extras.length ? [...merged, ...extras] : merged;
     });
     const stamped = stampStudioOutputs(rows, nextAssets, mode, config);
-    const nextConfig = withOutputFieldMap(config, mode);
+    let history = config.history;
+    for (const event of [...events, ...(uploadedCount ? [{ kind: 'uploaded' as const, rows: uploadedCount }] : [])]) {
+      history = pushHistory(history, event);
+    }
+    const nextConfig = withOutputFieldMap(history === config.history ? config : { ...config, history }, mode);
     setContacts(stamped);
     persistContactList(contactsKey, stamped);
     persistListMeta(scope, [mode], {
@@ -1598,7 +1627,9 @@ export function StudioGenerator({
     setConfig(nextConfig);
     try {
       const saved = await saveCampaign(nextConfig, listExportColumns(stamped, nextConfig.sourceColumns, mode), stamped, userId);
-      if (saved.config.id !== config.id) setConfig((current) => ({ ...current, id: saved.config.id, fieldMap: nextConfig.fieldMap }));
+      if (saved.config.id !== config.id || history !== config.history) {
+        setConfig((current) => ({ ...current, id: saved.config.id, fieldMap: nextConfig.fieldMap, history: nextConfig.history }));
+      }
       if (saved.syncError) setError(`Assets are on the list locally, but cloud sync failed: ${saved.syncError}`);
       else if (!quiet) {
         const cols = outputColumnNames(mode).slice(0, 2).join(' and ');
@@ -1619,7 +1650,32 @@ export function StudioGenerator({
       terminateStaticWorkers();
       return;
     }
+    const batchContacts = contacts.slice(0, 400);
+    const plan = planRegeneration(batchContacts, assets, config, mode, outputColumnsFor(mode));
+    if (plan.keep.length && plan.total > 0) {
+      setRegenPlan(plan);
+      return;
+    }
     await renderBatch();
+  };
+
+  const regenerate = async (changedOnly: boolean) => {
+    const plan = regenPlan;
+    setRegenPlan(null);
+    if (!plan) return;
+    await renderBatch(changedOnly ? plan.keep : []);
+  };
+
+  /** Exports count toward the campaign's status, saved without a full campaign save. */
+  const recordCampaignExport = (rows: number) => {
+    if (!rows) return;
+    const event = { kind: 'exported' as const, rows, at: new Date().toISOString() };
+    setConfig((current) => ({ ...current, history: pushHistory(current.history, event) }));
+    if (config.id) {
+      void appendCampaignHistory(config.id, event, userId).then((result) => {
+        if (result.syncError) reportError(new Error(result.syncError), { area: 'campaign-history', mode });
+      });
+    }
   };
 
   const openBatchReview = async () => {
@@ -1663,7 +1719,10 @@ export function StudioGenerator({
     }
     const zip = new JSZip();
     const packed = await Promise.all(selected.map((asset) => ensureAssetBlob(asset)));
-    packed.forEach((asset) => zip.file(asset.filename, asset.blob));
+    packed.forEach((asset) => {
+      zip.file(asset.filename, asset.blob);
+      if (asset.still?.blob.size) zip.file(asset.still.filename, asset.still.blob);
+    });
     const stamped = stampStudioOutputs(list, packed, mode, config);
     const exported = exportListCsv(stamped, config, mode);
     zip.file('prospects.csv', exported.csv);
@@ -1674,10 +1733,12 @@ export function StudioGenerator({
       bytes: asset.bytes,
       image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.image_url ?? ''),
       smartlead_image_url: asset.publicUrl ?? String(stamped.find((row) => row.row === asset.row)?.smartlead_image_url ?? ''),
+      ...(asset.still ? { still_filename: asset.still.filename, still_url: asset.still.publicUrl ?? asset.still.filename } : {}),
     }));
     zip.file('manifest.json', JSON.stringify(manifest, null, 2));
     saveAs(await zip.generateAsync({ type: 'blob' }), `${config.campaignName.replace(/\W+/g, '-') || 'campaign'}.zip`);
     recordExport(scope, selected.length);
+    recordCampaignExport(selected.length);
     toast.success(`${selected.length} assets downloaded in a ZIP${label}`, {
       description: `${exported.filename} includes the generated file names and links.`,
     });
@@ -1723,6 +1784,7 @@ export function StudioGenerator({
     const exported = exportListCsv(contacts, config, mode);
     const blob = new Blob([exported.csv], { type: 'text/csv;charset=utf-8' });
     saveAs(blob, exported.filename);
+    recordCampaignExport(contacts.length);
     toast.success(`Downloaded ${exported.filename}`, {
       description: 'Original columns plus generated file names and links.',
     });
@@ -1859,7 +1921,14 @@ export function StudioGenerator({
           ? config.photoMotion
           : config.animation;
   const canvasDims = dimensions[config.channel];
-  const gifEstimateKb = Math.round(canvasDims.width * canvasDims.height * (config.gifFrames?.length ?? 12) * (.006 + config.gifQuality * .001) / 1024);
+  const gifEstimate = gifEstimateFor(config);
+  // Estimate plus the size target, shown under each GIF encoding section.
+  const gifSizeFooter = (
+    <>
+      <p className="mono text-sm text-muted-foreground">Estimate: ~{gifEstimate.kb} KB · {gifEstimate.frames} frames · {gifEstimate.width} × {gifEstimate.height}</p>
+      <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.gifKeepUnder1Mb !== false} onCheckedChange={(value) => updateConfig('gifKeepUnder1Mb', value === true)} /> Keep under 1 MB</label>
+    </>
+  );
   const copyLines = config.copy.split('\n').length;
   const templatesForMode = savedTemplates.filter((item) => item.mode === mode);
   const batchSize = Math.min(contacts.length, 400);
@@ -2147,7 +2216,7 @@ export function StudioGenerator({
             <input id="postscript" className="field" value={config.postscript} onChange={(event) => updateConfig('postscript', event.target.value)} placeholder="P.S. {company} caught my attention." />
           </FieldRow>
           <VariantBControls config={config} contact={contact} mergeOptions={mergeOptions} onChange={(next) => updateConfig('copyVariantB', next)} />
-          <p className="helper">{mode === 'handgif' ? 'A photographed hand writes this note. Download and Generate are GIFs.' : avatarMode ? ((config.textMotion ?? 'still') === 'still' ? 'Still portrait card. Download is a PNG. Choose Auto writing if you want the letter to type in.' : 'Portrait stays. The letter animates. Download is a GIF.') : 'This studio exports a still page. Use Handwriting GIF if you want the writing hand.'}</p>
+          <p className="helper">{mode === 'handgif' ? 'A photographed hand writes this note. Download and Generate are GIFs.' : avatarMode ? ((config.textMotion ?? 'still') === 'still' ? `Still portrait card. Download is a ${stillFormatFor(config).toUpperCase()}. Choose Auto writing if you want the letter to type in.` : 'Portrait stays. The letter animates. Download is a GIF.') : 'This studio exports a still page. Use Handwriting GIF if you want the writing hand.'}</p>
         </Section>
       ) : (
         <Section title="Text layers" hint="Each layer is a movable block on the image. Drag it on the stage or use the Look tab.">
@@ -2227,6 +2296,7 @@ export function StudioGenerator({
             </ul>
           </div>
         )}
+        {avatarMode && <AvatarRowChecks config={config} contacts={contacts} configFor={configFor} onSelectRow={setSelectedRow} />}
       </Section>
     </div>
   );
@@ -2249,8 +2319,10 @@ export function StudioGenerator({
               onChange={(event) => {
                 const channel = event.target.value as CanvasSize;
                 if (mode === 'avatar') {
-                  const layout = avatarInNoteLayout(channel, config.avatarZone.width, config.noteZone);
-                  setConfig((current) => ({ ...current, channel, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text }));
+                  // Tall and square canvases stack the portrait over the letter; wide ones keep it beside.
+                  const avatarLayout = defaultAvatarLayout(channel);
+                  const layout = avatarInNoteLayout(channel, config.avatarZone.width, config.noteZone, avatarLayout);
+                  setConfig((current) => ({ ...current, channel, avatarLayout, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text }));
                 } else {
                   updateConfig('channel', channel);
                 }
@@ -2292,10 +2364,27 @@ export function StudioGenerator({
             max={36}
             value={Math.round(config.avatarZone.width * 100)}
             onChange={(value) => {
-              const layout = avatarInNoteLayout(config.channel, value / 100, config.noteZone);
+              const layout = avatarInNoteLayout(config.channel, value / 100, config.noteZone, avatarLayoutOf(config));
               setConfig((current) => ({ ...current, avatarZone: layout.avatar, textZone: layout.text }));
             }}
           />
+          <FieldRow label="Portrait position" hint="On top gives the letter the full width of the paper, so the type stays big on a phone.">
+            <ToggleGroup
+              type="single"
+              value={avatarLayoutOf(config)}
+              onValueChange={(value) => {
+                if (!value) return;
+                const avatarLayout = value as AvatarLayout;
+                const layout = avatarInNoteLayout(config.channel, config.avatarZone.width, config.noteZone, avatarLayout);
+                setConfig((current) => ({ ...current, avatarLayout, avatarZone: layout.avatar, textZone: layout.text }));
+              }}
+              className="grid grid-cols-2 gap-2"
+              aria-label="Portrait position"
+            >
+              <ToggleGroupItem value="stacked" className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">On top</ToggleGroupItem>
+              <ToggleGroupItem value="side" className="option-chip h-10 rounded-[10px] px-3 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">Left</ToggleGroupItem>
+            </ToggleGroup>
+          </FieldRow>
           <FieldRow label="Avatar shape">
             <ToggleGroup type="single" value={config.avatarShape ?? 'circle'} onValueChange={(value) => value && updateConfig('avatarShape', value as AvatarShape)} className="grid grid-cols-3 gap-2" aria-label="Avatar shape">
               {(['circle', 'rounded', 'square'] as AvatarShape[]).map((shape) => (
@@ -2387,10 +2476,13 @@ export function StudioGenerator({
                   <select id="handgif-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
+              {gifSizeFooter}
             </Section>
           )}
         </>
       ) : avatarMode ? (
+        <>
+        <AudiencePicker config={config} setConfig={setConfig} />
         <Section title="Letter and paper">
           <FieldRow id="typed-font" label="Typeface" hint="The portrait sits on the paper. Drag the Text frame to place the letter — it is typed, not handwritten.">
             <select id="typed-font" className="field" value={config.fontFamily} onChange={(event) => updateConfig('fontFamily', event.target.value)}>
@@ -2404,7 +2496,7 @@ export function StudioGenerator({
             <ColorField id="ink-color" label="Ink" value={config.inkColor} onChange={(value) => updateConfig('inkColor', value)} />
           </div>
           {paperColorPicker}
-          <FieldRow label="Letter motion" hint={(config.textMotion ?? 'still') === 'still' ? 'Still letter. Download is a PNG.' : 'Portrait stays. The letter animates. Download is a GIF.'}>
+          <FieldRow label="Letter motion" hint={(config.textMotion ?? 'still') === 'still' ? `Still letter. Download is a ${stillFormatFor(config).toUpperCase()}.` : 'Portrait stays. The letter animates. Download is a GIF.'}>
             <ToggleGroup type="single" value={config.textMotion ?? 'type'} onValueChange={(value) => value && updateConfig('textMotion', value as TextMotion)} className="grid grid-cols-2 gap-2" aria-label="Avatar letter motion">
               {textMotions.map((motion) => (
                 <ToggleGroupItem key={motion.id} value={motion.id} title={motion.hint} className="option-chip h-10 rounded-[10px] px-2 text-sm font-semibold hover:text-foreground data-[state=on]:border-studio data-[state=on]:bg-studio/10 data-[state=on]:text-foreground">{motion.label}</ToggleGroupItem>
@@ -2437,6 +2529,7 @@ export function StudioGenerator({
             }}
           />
         </Section>
+        </>
       ) : (
         <>
           <Section title="Motion" hint={usesMotion(config) ? `${memeMotions.find((item) => item.id === config.animation)?.hint ?? 'Animated'}. Download this row or Generate exports a GIF.` : 'Still frame — exports a PNG.'}>
@@ -2542,6 +2635,7 @@ export function StudioGenerator({
                   <select id="avatar-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
+              {gifSizeFooter}
             </Section>
           )}
           <div className="grid grid-cols-2 gap-2">
@@ -2572,7 +2666,7 @@ export function StudioGenerator({
                   <select id="gif-quality" className="field" value={config.gifQuality} onChange={(event) => updateConfig('gifQuality', Number(event.target.value))}><option value="3">Small</option><option value="7">Balanced</option><option value="10">High</option></select>
                 </FieldRow>
               </div>
-              <p className="mono text-sm text-muted-foreground">Estimate: {gifEstimateKb} KB · {config.gifFrames?.length ?? 12} frames</p>
+              {gifSizeFooter}
             </Section>
           )}
           </>
@@ -2621,7 +2715,7 @@ export function StudioGenerator({
         >
           <Images size={16} aria-hidden /> Review all images{assets.length ? ` (${assets.length})` : ''}
         </button>
-        <p className="helper">Opens every image stored in Supabase for this studio. Generate first if the cloud list is still empty.</p>
+        <p className="helper">Opens every image stored in Supabase for this campaign. Generate first if the cloud list is still empty.</p>
         <div className="grid grid-cols-2 gap-2">
           <button type="button" className="btn btn-quiet" onClick={downloadThisRow} disabled={downloading || generating} data-loading={downloading || undefined} aria-busy={downloading || undefined}><Download size={16} aria-hidden /> This row</button>
           <button type="button" className="btn btn-quiet" onClick={downloadAll} disabled={generating}><FileArchive size={16} aria-hidden /> All as ZIP</button>
@@ -2984,6 +3078,29 @@ export function StudioGenerator({
           </Sheet>
         </>
       )}
+
+      <Dialog open={regenPlan !== null} onOpenChange={(open) => { if (!open) setRegenPlan(null); }}>
+        <DialogContent className="rounded-[12px] border-border bg-card" data-testid="regenerate-dialog">
+          <DialogHeader>
+            <DialogTitle className="display text-2xl font-semibold">Regenerate this batch</DialogTitle>
+            <DialogDescription>
+              {regenPlan
+                ? regenPlan.changed
+                  ? `${regenPlan.total - regenPlan.changed} of ${regenPlan.total} rows have not changed since their file was made. Their files and links are kept.`
+                  : `None of the ${regenPlan.total} rows has changed since its file was made.`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <button type="button" className="btn btn-primary" autoFocus onClick={() => void regenerate(true)}>
+              Regenerate changed rows only ({regenPlan?.changed ?? 0} of {regenPlan?.total ?? 0})
+            </button>
+            <button type="button" className="btn btn-quiet" onClick={() => void regenerate(false)}>
+              Regenerate all
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
         <DialogContent className="flex max-h-[92dvh] w-[min(1080px,calc(100vw-24px))] max-w-none flex-col gap-4 overflow-hidden rounded-[12px] border-border bg-card p-5 sm:max-w-none">

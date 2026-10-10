@@ -33,7 +33,7 @@ import {
   TypographyH4,
   TypographyLarge,
 } from "@/carousel/components/typography";
-import { Separator } from "@/carousel/components/ui/separator";
+import { Separator } from "@/components/ui/separator";
 
 const fontSizeMap: Record<FontSizeType, React.ReactElement> = {
   [FontSizeType.enum.Small]: <Type className="h-2 w-2" />,

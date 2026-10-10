@@ -1,8 +1,9 @@
-import { audienceValues, RECOMMENDED_AUDIENCE } from './audience';
+import { audienceValues, avatarAudienceValues, RECOMMENDED_AUDIENCE } from './audience';
 import { memeSamples } from './meme-samples';
 import { modeLabel } from './renderer';
 import {
   avatarInNoteLayout,
+  avatarLayoutOf,
   defaultCrop,
   finishPaperZone,
   isHandwritingFamily,
@@ -76,8 +77,11 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
   // writing): most cold email is opened on a phone, where the old landscape card shrank the writing below
   // readable. A portrait GIF frame has about the same pixel count as the landscape one, so file size holds.
   const audience = handwriting ? audienceValues(RECOMMENDED_AUDIENCE, mode === 'handwritten' ? 'photo' : 'desk') : null;
-  const channel = audience?.channel ?? (handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn');
-  const layout = mode === 'avatar' ? avatarInNoteLayout(channel, 0.24, finishPaperZone('desk')) : null;
+  // Avatar cards start Phone-first too: portrait canvas, portrait on top and type big enough to read at
+  // 330 px wide. The old A4 sheet showed the letter at about 7.5 px on a phone.
+  const avatarLook = mode === 'avatar' ? avatarAudienceValues(RECOMMENDED_AUDIENCE, 'desk') : null;
+  const channel = avatarLook?.channel ?? audience?.channel ?? (handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn');
+  const layout = avatarLook ? { note: avatarLook.noteZone, avatar: avatarLook.avatarZone, text: avatarLook.textZone } : null;
   const paperKind: PaperKind = mode === 'avatar' ? 'white-paper' : 'notebook';
   const memeSample = mode === 'memes' ? defaultMemeSample() : undefined;
   return {
@@ -88,7 +92,10 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     copy:
       mode === 'memes' || mode === 'gif'
         ? 'HEY {first_name|THERE}'
-        : handwriting
+        : mode === 'avatar'
+          // The personal line ({msg}) is drawn after the copy from the message column, so it is not in the copy.
+          ? 'Hi {first_name|there},\n\nLoved what {company|your team} is building. One idea could help a {role|leader} in {city|your market} start more good conversations.'
+          : handwriting
           // About 25 words: short enough to stay big on a phone.
           ? 'Hi {first_name|there},\n\nLoved what {company|your team} is building. One idea could help a {role|leader} in {city|your market} start more good conversations.\n\n{msg|Worth a quick chat next week?}'
           : 'Hi {first_name|there},\n\nLoved what {company|your team} is building. I have one idea that could help a {role|leader} in {city|your market} create more qualified conversations.\n\n{msg|Worth a quick chat next week?}',
@@ -101,7 +108,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
           : `{company}_{row}_${mode}`,
     channel,
     // Notes are sized to fill the default card.
-    fontSize: audience?.fontSize ?? (mode === 'avatar' ? 28 : handwriting ? 50 : 44),
+    fontSize: avatarLook?.fontSize ?? audience?.fontSize ?? (handwriting ? 50 : 44),
     inkColor: '#173765',
     paperColor: paperKind === 'white-paper' ? '#ffffff' : '#f7f0e1',
     paperColorPreset: paperKind === 'white-paper' ? 'white' : 'cream',
@@ -131,14 +138,15 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     photoMotion: 'still',
     effect: 'none',
     avatarShape: 'circle',
-    message: '{msg|Loved what you shipped.}',
+    message: '{msg|Worth a quick chat next week?}',
     showMessage: true,
     imageCrop: { ...defaultCrop },
     avatarCrop: { ...defaultCrop },
     websiteZone: { x: 0.12, y: 0.24, width: 0.76, height: 0.46 },
     avatarZone: layout?.avatar ?? { x: 0.73, y: 0.73, width: 0.18, height: 0.18 },
     noteZone: layout?.note ?? audience?.noteZone ?? finishPaperZone('desk'),
-    cardFill: audience?.cardFill,
+    cardFill: avatarLook?.cardFill ?? audience?.cardFill,
+    avatarLayout: avatarLook?.avatarLayout,
     textZone: layout?.text ?? { x: 0.18, y: 0.18, width: 0.64, height: 0.58 },
     avatarColumn: mode === 'avatar' ? 'avatar' : undefined,
     messageColumn: mode === 'avatar' ? 'msg' : undefined,
@@ -154,8 +162,10 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
   const fontFamily = mode === 'avatar' && isHandwritingFamily(value.fontFamily)
     ? 'Space Grotesk'
     : (value.fontFamily ?? defaults.fontFamily);
+  // Older looks have no layout field: their zones are portrait-left, and they stay that way.
+  const avatarLayout = mode === 'avatar' ? avatarLayoutOf(value) : undefined;
   const layout = mode === 'avatar'
-    ? avatarInNoteLayout(value.channel ?? defaults.channel, value.avatarZone?.width ?? 0.24, defaults.noteZone)
+    ? avatarInNoteLayout(value.channel ?? defaults.channel, value.avatarZone?.width ?? 0.24, defaults.noteZone, avatarLayout)
     : null;
   const savedNote = value.noteZone ?? defaults.noteZone;
   const savedAvatar = value.avatarZone ?? defaults.avatarZone;
@@ -169,6 +179,7 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
     customImage: value.customImage,
     // Card zoom belongs to the look that chose it: older saves keep their own framing.
     cardFill: value.cardFill,
+    avatarLayout,
     websiteZone: value.websiteZone ?? defaults.websiteZone,
     noteZone: inNote ? savedNote : (layout?.note ?? defaults.noteZone),
     avatarZone: inNote ? savedAvatar : (layout?.avatar ?? defaults.avatarZone),

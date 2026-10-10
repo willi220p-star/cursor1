@@ -8,10 +8,10 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-} from "@/carousel/components/ui/form";
+} from "@/components/ui/form";
 
 import { DocumentFormReturn } from "@/carousel/lib/document-form-types";
-import { Checkbox } from "@/carousel/components/ui/checkbox";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export function PageNumberForm({}: {}) {
   const form: DocumentFormReturn = useFormContext(); // retrieve those props
