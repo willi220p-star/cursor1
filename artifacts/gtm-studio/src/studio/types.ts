@@ -380,6 +380,18 @@ export function finishPaperZone(finish: NoteFinish): CanvasZone {
   return { x: 0.11, y: 0.08, width: 0.78, height: 0.84 };
 }
 
+/**
+ * Zoom to card: the paper for a finish, enlarged so it fills `fill` of the frame on each axis
+ * (centred, the rest is desk). Unset keeps the finish's own framing; clean paper never zooms.
+ */
+export function cardZone(finish: NoteFinish, fill?: number): CanvasZone {
+  const base = finishPaperZone(finish);
+  if (!fill || finish === 'clean') return base;
+  const size = Math.max(base.width, Math.min(0.94, fill));
+  const margin = (1 - size) / 2;
+  return { x: margin, y: margin, width: size, height: size };
+}
+
 export function migrateDeskSurface(value: string | undefined): DeskSurface {
   if (value === 'walnut' || value === 'oak' || value === 'maple' || value === 'mahogany' || value === 'custom' || value === 'pine') return value;
   return 'pine';
@@ -482,6 +494,10 @@ export type StudioConfig = {
   websiteColumn?: string;
   avatarColumn?: string;
   messageColumn?: string;
+  /** Opener library id the message came from. Kept through hand edits (the copy still grows from that opener); cleared when a saved template replaces the copy. */
+  openerId?: string;
+  /** Optional second message for an A/B split. Even rows get it (see variants.ts); unset means everyone gets variant A. No postscript keeps variant A's P.S. */
+  copyVariantB?: { copy: string; postscript?: string; openerId?: string };
   /** Column {hook} reads from. Unset: guessed from names like hook, icebreaker, first_line. */
   hookColumn?: string;
   /** How the hook is marked in the note, like a pen would. Default underline. */
@@ -494,6 +510,8 @@ export type StudioConfig = {
   imageCrop: CropFocus;
   avatarCrop: CropFocus;
   noteZone: CanvasZone;
+  /** Notes: how much of the frame the card fills in scene finishes (see cardZone). Unset: the finish's own framing. */
+  cardFill?: number;
   textZone: CanvasZone;
   websiteZone: CanvasZone;
   avatarZone: CanvasZone;
