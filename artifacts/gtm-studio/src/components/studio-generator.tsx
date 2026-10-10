@@ -104,6 +104,7 @@ import { planRegeneration, type RegenerationPlan } from '@/studio/row-hash';
 import { HookControls } from '@/components/studio/hook-controls';
 import { AudiencePicker } from '@/components/studio/audience-picker';
 import { AvatarRowChecks } from '@/components/studio/avatar-row-checks';
+import { GuideButton } from '@/components/studio/guide-sheet';
 import { wordTargetFor } from '@/studio/audience';
 import {
   contactsStorageKey,
@@ -2815,6 +2816,7 @@ export function StudioGenerator({
           ))}
         </div>
         <div className="toolbar-actions flex flex-wrap items-center justify-end gap-2">
+          <GuideButton guideKey={mode} />
           <button type="button" className="btn btn-quiet" onClick={saveCurrentCampaign} data-loading={saving || undefined} aria-busy={saving || undefined}><Save size={16} aria-hidden /> Save</button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

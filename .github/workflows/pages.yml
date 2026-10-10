@@ -44,6 +44,8 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
+          # Written into index.html as <meta name="build">, so the smoke job can tell this build is live.
+          VITE_COMMIT_SHA: ${{ github.sha }}
         run: pnpm run build
       - name: Prepare Pages files
         run: |
@@ -59,6 +61,42 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Loads the live site after each deploy: waits until this commit's build is served, then checks the
+  # sign-in screen and a deep link. Never signs in and never writes to Supabase.
+  smoke:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - name: Live smoke test
+        working-directory: artifacts/gtm-studio
+        env:
+          LIVE_URL: ${{ needs.deploy.outputs.page_url || 'https://willi220p-star.github.io/cursor1/' }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm exec playwright test --config playwright.live.config.ts
+      - name: Keep the trace when it fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-smoke-results
+          path: artifacts/gtm-studio/test-results
+          retention-days: 7

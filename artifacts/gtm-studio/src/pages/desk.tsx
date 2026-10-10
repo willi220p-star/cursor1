@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { CircleUser, Film, Image, Pencil } from 'lucide-react';
 import { Library } from '@/components/studio/library';
+import { GuideButton } from '@/components/studio/guide-sheet';
 import { PanelBoundary } from '@/components/error-boundary';
 import { publicAssetUrl } from '@/lib/public-url';
 import { exportsInLast30Days, LIBRARY_CHANGED_EVENT, requestSampleList } from '@/studio/activity';
@@ -122,6 +123,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
                 <button type="button" className="btn btn-outline" onClick={loadSample}>Load the sample list</button>
               </>
             )}
+            <GuideButton guideKey="desk" withLabel />
           </div>
           {latest && latestStatus && (
             <p className="desk-continue-meta" data-testid="continue-status">
