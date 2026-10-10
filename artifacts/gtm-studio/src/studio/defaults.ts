@@ -1,3 +1,4 @@
+import { audienceValues, RECOMMENDED_AUDIENCE } from './audience';
 import { memeSamples } from './meme-samples';
 import { modeLabel } from './renderer';
 import {
@@ -71,8 +72,11 @@ function defaultMemeSample() {
 export function defaultConfig(mode: StudioMode): StudioConfig {
   const paper = mode === 'handwritten' || mode === 'avatar' || mode === 'handgif';
   const handwriting = mode === 'handwritten' || mode === 'handgif';
-  // Notes default to a landscape card: the whole note shows in an email or LinkedIn preview.
-  const channel = handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn';
+  // New Notes and Handwriting GIF campaigns start Phone-first (portrait, card filling the frame, bigger
+  // writing): most cold email is opened on a phone, where the old landscape card shrank the writing below
+  // readable. A portrait GIF frame has about the same pixel count as the landscape one, so file size holds.
+  const audience = handwriting ? audienceValues(RECOMMENDED_AUDIENCE, mode === 'handwritten' ? 'photo' : 'desk') : null;
+  const channel = audience?.channel ?? (handwriting ? 'Card' : paper ? 'A4' : 'LinkedIn');
   const layout = mode === 'avatar' ? avatarInNoteLayout(channel, 0.24, finishPaperZone('desk')) : null;
   const paperKind: PaperKind = mode === 'avatar' ? 'white-paper' : 'notebook';
   const memeSample = mode === 'memes' ? defaultMemeSample() : undefined;
@@ -84,7 +88,10 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     copy:
       mode === 'memes' || mode === 'gif'
         ? 'HEY {first_name|THERE}'
-        : 'Hi {first_name|there},\n\nLoved what {company|your team} is building. I have one idea that could help a {role|leader} in {city|your market} create more qualified conversations.\n\n{msg|Worth a quick chat next week?}',
+        : handwriting
+          // About 25 words: short enough to stay big on a phone.
+          ? 'Hi {first_name|there},\n\nLoved what {company|your team} is building. One idea could help a {role|leader} in {city|your market} start more good conversations.\n\n{msg|Worth a quick chat next week?}'
+          : 'Hi {first_name|there},\n\nLoved what {company|your team} is building. I have one idea that could help a {role|leader} in {city|your market} create more qualified conversations.\n\n{msg|Worth a quick chat next week?}',
     filename: mode === 'avatar'
       ? '{first_name}_{company}_{row}_avatar'
       : mode === 'handwritten'
@@ -94,7 +101,7 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
           : `{company}_{row}_${mode}`,
     channel,
     // Notes are sized to fill the default card.
-    fontSize: mode === 'avatar' ? 28 : handwriting ? 50 : 44,
+    fontSize: audience?.fontSize ?? (mode === 'avatar' ? 28 : handwriting ? 50 : 44),
     inkColor: '#173765',
     paperColor: paperKind === 'white-paper' ? '#ffffff' : '#f7f0e1',
     paperColorPreset: paperKind === 'white-paper' ? 'white' : 'cream',
@@ -130,7 +137,8 @@ export function defaultConfig(mode: StudioMode): StudioConfig {
     avatarCrop: { ...defaultCrop },
     websiteZone: { x: 0.12, y: 0.24, width: 0.76, height: 0.46 },
     avatarZone: layout?.avatar ?? { x: 0.73, y: 0.73, width: 0.18, height: 0.18 },
-    noteZone: layout?.note ?? finishPaperZone('desk'),
+    noteZone: layout?.note ?? audience?.noteZone ?? finishPaperZone('desk'),
+    cardFill: audience?.cardFill,
     textZone: layout?.text ?? { x: 0.18, y: 0.18, width: 0.64, height: 0.58 },
     avatarColumn: mode === 'avatar' ? 'avatar' : undefined,
     messageColumn: mode === 'avatar' ? 'msg' : undefined,
@@ -159,6 +167,8 @@ export function normalizeConfig(mode: StudioMode, value: StudioConfig) {
     fontFamily,
     // A saved look without a photo stays without one: the default meme photo is for new campaigns only.
     customImage: value.customImage,
+    // Card zoom belongs to the look that chose it: older saves keep their own framing.
+    cardFill: value.cardFill,
     websiteZone: value.websiteZone ?? defaults.websiteZone,
     noteZone: inNote ? savedNote : (layout?.note ?? defaults.noteZone),
     avatarZone: inNote ? savedAvatar : (layout?.avatar ?? defaults.avatarZone),

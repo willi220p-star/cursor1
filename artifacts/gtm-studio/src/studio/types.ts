@@ -380,6 +380,18 @@ export function finishPaperZone(finish: NoteFinish): CanvasZone {
   return { x: 0.11, y: 0.08, width: 0.78, height: 0.84 };
 }
 
+/**
+ * Zoom to card: the paper for a finish, enlarged so it fills `fill` of the frame on each axis
+ * (centred, the rest is desk). Unset keeps the finish's own framing; clean paper never zooms.
+ */
+export function cardZone(finish: NoteFinish, fill?: number): CanvasZone {
+  const base = finishPaperZone(finish);
+  if (!fill || finish === 'clean') return base;
+  const size = Math.max(base.width, Math.min(0.94, fill));
+  const margin = (1 - size) / 2;
+  return { x: margin, y: margin, width: size, height: size };
+}
+
 export function migrateDeskSurface(value: string | undefined): DeskSurface {
   if (value === 'walnut' || value === 'oak' || value === 'maple' || value === 'mahogany' || value === 'custom' || value === 'pine') return value;
   return 'pine';
@@ -494,6 +506,8 @@ export type StudioConfig = {
   imageCrop: CropFocus;
   avatarCrop: CropFocus;
   noteZone: CanvasZone;
+  /** Notes: how much of the frame the card fills in scene finishes (see cardZone). Unset: the finish's own framing. */
+  cardFill?: number;
   textZone: CanvasZone;
   websiteZone: CanvasZone;
   avatarZone: CanvasZone;
