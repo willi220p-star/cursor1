@@ -12,10 +12,13 @@ export function OpenerLibrary({
   contact,
   onUseMessage,
   onUsePostscript,
+  onUseVariantB,
 }: {
   contact: Contact;
-  onUseMessage: (body: string, title: string) => void;
+  onUseMessage: (body: string, title: string, id: string) => void;
   onUsePostscript: (text: string, title: string) => void;
+  /** When set, openers also offer "Use as variant B" for an A/B split. */
+  onUseVariantB?: (body: string, title: string, id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<Kind>('openers');
@@ -30,9 +33,14 @@ export function OpenerLibrary({
     setCategory('All');
   };
 
-  const use = (body: string, title: string) => {
-    if (kind === 'openers') onUseMessage(body, title);
+  const use = (body: string, title: string, id: string) => {
+    if (kind === 'openers') onUseMessage(body, title, id);
     else onUsePostscript(body, title);
+    setOpen(false);
+  };
+
+  const useAsB = (body: string, title: string, id: string) => {
+    onUseVariantB?.(body, title, id);
     setOpen(false);
   };
 
@@ -85,14 +93,26 @@ export function OpenerLibrary({
                 {category === 'All' && <p className="opener-card-category">{item.category}</p>}
                 <p className="opener-card-body">{rendered}</p>
                 <p className="helper text-[13px]">{item.why}</p>
-                <button
-                  type="button"
-                  className="btn btn-quiet opener-card-use"
-                  aria-label={`${kind === 'openers' ? 'Use as message' : 'Use as P.S.'}: ${item.title}`}
-                  onClick={() => use(item.body, item.title)}
-                >
-                  {kind === 'openers' ? 'Use as message' : 'Use as P.S.'}
-                </button>
+                <div className="opener-card-actions">
+                  <button
+                    type="button"
+                    className="btn btn-quiet opener-card-use"
+                    aria-label={`${kind === 'openers' ? 'Use as message' : 'Use as P.S.'}: ${item.title}`}
+                    onClick={() => use(item.body, item.title, item.id)}
+                  >
+                    {kind === 'openers' ? 'Use as message' : 'Use as P.S.'}
+                  </button>
+                  {kind === 'openers' && onUseVariantB && (
+                    <button
+                      type="button"
+                      className="btn btn-quiet opener-card-use"
+                      aria-label={`Use as variant B: ${item.title}`}
+                      onClick={() => useAsB(item.body, item.title, item.id)}
+                    >
+                      Use as variant B
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}

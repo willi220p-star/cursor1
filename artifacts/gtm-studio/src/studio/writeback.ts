@@ -1,20 +1,75 @@
 import Papa from 'papaparse';
+import { stripHookMarks } from './hook-mark';
 import { contactColumns } from './importers';
-import type { Contact, GeneratedAsset, StudioConfig, StudioMode } from './types';
+import { renderMerge } from './merge';
+import { configForRow, openerFor, rowVariant } from './variants';
+import { isCutRoom, isPaperDesk, type Contact, type GeneratedAsset, type StudioConfig, type StudioMode } from './types';
 
 export type StudioOutputColumns = {
   file: string;
   url: string;
   status: string;
+  /** Plain-text version of what the image says, for the email's alt text. */
+  alt: string;
+  /** A/B copy split and the opener behind the copy. Only studios that write a message have them. */
+  variant?: string;
+  opener?: string;
 };
 
+function columnsWithPrefix(prefix: string, split: boolean): StudioOutputColumns {
+  return {
+    file: `${prefix}_file`,
+    url: `${prefix}_url`,
+    status: `${prefix}_status`,
+    alt: `${prefix}_alt`,
+    ...(split ? { variant: `${prefix}_variant`, opener: `${prefix}_opener` } : {}),
+  };
+}
+
 const OUTPUT_COLUMNS: Record<StudioMode, StudioOutputColumns> = {
-  handwritten: { file: 'handwritten_file', url: 'handwritten_url', status: 'handwritten_status' },
-  avatar: { file: 'avatar_card_file', url: 'avatar_card_url', status: 'avatar_card_status' },
-  memes: { file: 'meme_file', url: 'meme_url', status: 'meme_status' },
-  gif: { file: 'gif_file', url: 'gif_url', status: 'gif_status' },
-  handgif: { file: 'handwriting_gif_file', url: 'handwriting_gif_url', status: 'handwriting_gif_status' },
+  handwritten: columnsWithPrefix('handwritten', true),
+  avatar: columnsWithPrefix('avatar_card', true),
+  memes: columnsWithPrefix('meme', false),
+  gif: columnsWithPrefix('gif', false),
+  handgif: columnsWithPrefix('handwriting_gif', true),
 };
+
+export const ALT_TEXT_MAX = 300;
+
+/** Collapse whitespace, drop leftover {tags} and stray braces, and cut on a word near the limit. */
+export function cleanAltText(text: string, max = ALT_TEXT_MAX) {
+  const flat = stripHookMarks(text)
+    .replace(/\{[^{}]*\}/g, ' ')
+    .replace(/[{}]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .trim();
+  if (flat.length <= max) return flat;
+  const cut = flat.slice(0, max - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,.;:–—-]+$/, '')}…`;
+}
+
+/**
+ * What the image says for this row, as plain text, so an email client that blocks images
+ * (Outlook does by default) still shows the message. Uses this row's A/B copy.
+ */
+export function altTextFor(config: StudioConfig, contact: Contact, mode: StudioMode = config.mode) {
+  const row = configForRow(config, contact);
+  const merge = (text: string | undefined) => (text ? renderMerge(text, contact, { hookColumn: row.hookColumn }) : '');
+  let parts: string[];
+  if (isCutRoom(mode)) {
+    parts = (row.layers ?? []).map((layer) => merge(layer.text));
+  } else {
+    const postscript = merge(row.postscript).trim();
+    const ps = postscript && !/^p\.?\s*s\b/i.test(postscript) ? `P.S. ${postscript}` : postscript;
+    const message = mode === 'avatar' && row.showMessage !== false
+      ? (row.messageColumn ? String(contact[row.messageColumn] ?? '').trim() : '') || merge(row.message).trim()
+      : '';
+    parts = [merge(row.copy), message, merge(row.signature), ps];
+  }
+  return cleanAltText(parts.map((part) => part.trim()).filter(Boolean).join(' '));
+}
 
 export type ListMeta = {
   fieldMap?: StudioConfig['fieldMap'];
@@ -32,7 +87,7 @@ export function outputColumnsFor(mode: StudioMode): StudioOutputColumns {
 
 export function outputColumnNames(mode: StudioMode) {
   const cols = outputColumnsFor(mode);
-  return [cols.file, cols.url, cols.status, 'image_url', 'smartlead_image_url'];
+  return [cols.file, cols.url, cols.status, cols.alt, ...(cols.variant ? [cols.variant] : []), ...(cols.opener ? [cols.opener] : []), 'image_url', 'smartlead_image_url'];
 }
 
 export function persistListMeta(scope: string, modes: StudioMode[], meta: ListMeta) {
@@ -108,7 +163,11 @@ export function exportListCsv(rows: Contact[], config: Pick<StudioConfig, 'sourc
   };
 }
 
-export function stampStudioOutputs(rows: Contact[], assets: GeneratedAsset[], mode: StudioMode): Contact[] {
+/**
+ * Writes the generated file, link and status onto each row that has an asset. With the studio
+ * config it also writes the alt text, the A/B variant and the opener id for that row.
+ */
+export function stampStudioOutputs(rows: Contact[], assets: GeneratedAsset[], mode: StudioMode, config?: StudioConfig): Contact[] {
   if (!assets.length) return rows;
   const cols = outputColumnsFor(mode);
   const byRow = new Map(assets.map((asset) => [asset.row, asset]));
@@ -119,8 +178,15 @@ export function stampStudioOutputs(rows: Contact[], assets: GeneratedAsset[], mo
     const publicUrl = asset.publicUrl?.trim() ?? '';
     const file = failed ? '' : asset.filename;
     const url = publicUrl || file;
+    const extra: Record<string, string> = {};
+    if (config) {
+      extra[cols.alt] = altTextFor(config, row, mode);
+      if (cols.variant && isPaperDesk(mode)) extra[cols.variant] = rowVariant(config, row);
+      if (cols.opener && isPaperDesk(mode)) extra[cols.opener] = openerFor(config, row);
+    }
     return {
       ...row,
+      ...extra,
       [cols.file]: file,
       [cols.url]: url,
       [cols.status]: failed ? (asset.error || 'failed') : (asset.uploadStatus === 'failed' ? 'generated' : (publicUrl ? 'uploaded' : 'generated')),

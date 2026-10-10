@@ -5,6 +5,7 @@ import { applyFieldMap, detectFieldMap } from './field-map';
 import { exportListCsv, outputColumnNames, stampStudioOutputs } from './writeback';
 import { checkRows, describeIssue } from './row-checks';
 import { runQueue } from './batch-queue';
+import { defaultConfig } from './defaults';
 import { scrubText } from '@/lib/crash-reports';
 import type { Contact, GeneratedAsset } from './types';
 
@@ -70,7 +71,7 @@ describe('writing results back to the list', () => {
   });
 
   it('exports the output columns in the CSV', () => {
-    const stamped = stampStudioOutputs([maya], [asset(1)], 'memes');
+    const stamped = stampStudioOutputs([maya], [asset(1)], 'memes', defaultConfig('memes'));
     const { csv } = exportListCsv(stamped, { campaignName: 'Wesley Mission' }, 'memes');
     for (const column of outputColumnNames('memes')) expect(csv.split('\n')[0]).toContain(column);
   });
