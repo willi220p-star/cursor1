@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowUpDown, Copy, Database, FileText, Folder, FolderInput, FolderPlus, History, MoreHorizontal, Pencil, Search, Tag, Trash2 } from 'lucide-react';
+import { ArrowUpDown, Copy, Database, Eraser, FileText, Folder, FolderInput, FolderPlus, History, MoreHorizontal, Pencil, Search, Tag, Trash2 } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -25,6 +25,8 @@ import {
   statusLabels,
 } from '@/studio/campaign-status';
 import { reportError } from '@/lib/report';
+import { formatBytes } from '@/studio/cleanup-plan';
+import { prepareCampaignCleanup, runCampaignCleanup, type CleanupResult, type PreparedCleanup } from '@/studio/cleanup';
 import {
   createFileFolder,
   duplicateCampaign,
@@ -64,6 +66,38 @@ type NameRequest =
   | { kind: 'set-client'; campaign: SavedCampaign };
 
 type KindFilter = 'all' | LibraryItem['kind'];
+
+type CleanupRequest = {
+  campaign: SavedCampaign;
+  phase: 'checking' | 'ready' | 'deleting';
+  plan?: PreparedCleanup;
+  error?: string;
+};
+
+/** How many file names the clean-up dialog lists before "and N more". */
+const CLEANUP_PREVIEW = 10;
+
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+function cleanupSize(plan: Pick<PreparedCleanup, 'bytes' | 'unknownSizes'>) {
+  return plan.unknownSizes === 0 && plan.bytes > 0 ? formatBytes(plan.bytes) : '';
+}
+
+function cleanupToast(result: CleanupResult, total: number) {
+  const freed = result.freedBytes > 0 ? `, freed ${result.unknownSizes ? 'at least ' : ''}${formatBytes(result.freedBytes)}` : '';
+  if (!result.failures.length) {
+    toast.success(`Deleted ${plural(result.deleted, 'file')}${freed}`);
+    return;
+  }
+  const title = result.deleted ? `Deleted ${result.deleted} of ${plural(total, 'file')}${freed}` : 'Could not clean up old files';
+  toast.error(title, { description: result.failures.join('\n'), duration: 12_000 });
+}
+
+function shortDate(at: string | null) {
+  if (!at) return '';
+  const date = new Date(at);
+  return Number.isFinite(date.getTime()) ? date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+}
 
 const kindFilters: Array<{ value: KindFilter; label: string }> = [
   { value: 'all', label: 'All' },
@@ -131,6 +165,7 @@ export function Library({
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
   const [clientFilter, setClientFilter] = useState(ALL_CLIENTS);
+  const [cleanup, setCleanup] = useState<CleanupRequest | null>(null);
   // Deletes wait UNDO_DELETE_MS so they can be undone; these rows are hidden meanwhile.
   const [pendingKeys, setPendingKeys] = useState<string[]>([]);
   const pendingDeletes = useRef(new Map<string, { item: LibraryItem; timer: number; toastId: string | number }>());
@@ -360,6 +395,39 @@ export function Library({
       .finally(() => setBusyId(null));
   };
 
+  /** Opens the clean-up dialog and works out, read-only, what would be deleted. */
+  const startCleanup = (campaign: SavedCampaign) => {
+    if (busyId) return;
+    setCleanup({ campaign, phase: 'checking' });
+    const same = (current: CleanupRequest | null) => current?.campaign.id === campaign.id;
+    void prepareCampaignCleanup(campaign, userId)
+      .then((plan) => setCleanup((current) => (same(current) ? { campaign, phase: 'ready', plan } : current)))
+      .catch((error) => {
+        reportError(error, { area: 'library', action: 'cleanup-plan' });
+        const message = error instanceof Error ? error.message : 'Could not read the stored files.';
+        setCleanup((current) => (same(current) ? { campaign, phase: 'ready', error: `${message} Nothing was deleted.` } : current));
+      });
+  };
+
+  const confirmCleanup = () => {
+    const plan = cleanup?.plan;
+    if (!cleanup || cleanup.phase !== 'ready' || !plan || plan.refused || !plan.remove.length) return;
+    const { campaign } = cleanup;
+    setCleanup({ ...cleanup, phase: 'deleting' });
+    setBusyId(campaign.id);
+    void runCampaignCleanup(plan, userId)
+      .then((result) => cleanupToast(result, plan.remove.length))
+      .catch((error) => {
+        reportError(error, { area: 'library', action: 'cleanup' });
+        toast.error('Could not clean up old files', { description: error instanceof Error ? error.message : undefined });
+      })
+      .finally(() => {
+        setBusyId(null);
+        setCleanup(null);
+        if (mounted.current) onChangedRef.current();
+      });
+  };
+
   const deleteFolder = (folder: FileFolder) => {
     if (busyId) return;
     if (!window.confirm(`Delete the folder “${folder.name}”? Templates, files, and campaigns inside it go back to the library. Nothing inside is deleted.`)) return;
@@ -542,6 +610,9 @@ export function Library({
                           <DropdownMenuItem className="min-h-11" onSelect={() => ask({ kind: 'set-client', campaign: item.campaign }, client)}>
                             <Tag aria-hidden /> {client ? 'Change client…' : 'Set client…'}
                           </DropdownMenuItem>
+                          <DropdownMenuItem className="min-h-11" onSelect={() => startCleanup(item.campaign)}>
+                            <Eraser aria-hidden /> Clean up old versions…
+                          </DropdownMenuItem>
                         </>
                       )}
                       <MoveMenu current={item.folderId} folders={folders ?? []} onMove={(folderId) => moveItem(item, folderId)} />
@@ -624,6 +695,8 @@ export function Library({
           )}
         </DialogContent>
       </Dialog>
+
+      <CleanupDialog request={cleanup} onCancel={() => setCleanup(null)} onConfirm={confirmCleanup} />
 
       <Dialog open={naming !== null} onOpenChange={(open) => { if (!open) setNaming(null); }}>
         <DialogContent className="rounded-[12px] border-border bg-card">
@@ -731,5 +804,74 @@ function ActionsMenu({
         {children}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+function CleanupDialog({
+  request,
+  onCancel,
+  onConfirm,
+}: {
+  request: CleanupRequest | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const plan = request?.plan;
+  const deleting = request?.phase === 'deleting';
+  const checking = request?.phase === 'checking';
+  const blocked = Boolean(request?.error || plan?.refused);
+  const count = plan && !plan.refused ? plan.remove.length : 0;
+  const size = plan ? cleanupSize(plan) : '';
+  const shown = plan?.remove.slice(0, CLEANUP_PREVIEW) ?? [];
+  const kept = plan?.keep.length ?? 0;
+
+  let description: string;
+  if (checking) description = `Checking which stored files the current list of ${request?.campaign.name ?? 'this campaign'} links to. Nothing is deleted yet.`;
+  else if (request?.error) description = request.error;
+  else if (plan?.refused) description = plan.refused;
+  else if (!count) description = 'Nothing to clean up. Every generated file for this campaign is linked from your current list.';
+  else description = `${plural(count, 'old file')}${size ? ` (${size})` : ''} from earlier runs will be deleted. Files your current list links to are kept.`;
+
+  return (
+    <Dialog open={request !== null} onOpenChange={(open) => { if (!open && !deleting) onCancel(); }}>
+      <DialogContent className="rounded-[12px] border-border bg-card" data-cleanup-dialog aria-busy={checking || deleting}>
+        <DialogHeader>
+          <DialogTitle className="display pr-8 text-2xl font-semibold">Clean up old versions</DialogTitle>
+          <DialogDescription data-cleanup-summary className={blocked ? 'text-foreground' : undefined}>{description}</DialogDescription>
+        </DialogHeader>
+        {checking && (
+          <div className="space-y-2" aria-hidden>
+            {[0, 1, 2].map((row) => <div key={row} className="h-6 animate-pulse rounded-[8px] bg-surface-2" />)}
+          </div>
+        )}
+        {count > 0 && (
+          <div className="min-w-0">
+            <ul className="max-h-60 overflow-y-auto rounded-[12px] border border-border text-sm" data-cleanup-list aria-label="Files that will be deleted">
+              {shown.map((file) => (
+                <li key={file.path} className="flex min-w-0 items-center justify-between gap-3 border-b border-border px-3 py-2 last:border-b-0" title={file.path}>
+                  <span className="min-w-0 truncate">{file.name}{file.kind === 'still' && <span className="text-muted-foreground"> · still</span>}</span>
+                  <span className="flex-none text-xs text-muted-foreground">{shortDate(file.createdAt)}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {count > shown.length ? `And ${count - shown.length} more. ` : ''}
+              {kept ? `${plural(kept, 'file')} stay${kept === 1 ? 's' : ''} linked. ` : ''}
+              Imported lists, uploaded images and other campaigns are never touched.
+            </p>
+          </div>
+        )}
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" className="btn btn-quiet" onClick={onCancel} disabled={deleting}>
+            {count > 0 ? 'Cancel' : 'Done'}
+          </button>
+          {count > 0 && (
+            <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={deleting} data-loading={deleting || undefined}>
+              <Trash2 size={16} aria-hidden /> Delete {plural(count, 'file')}
+            </button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

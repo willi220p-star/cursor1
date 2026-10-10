@@ -278,7 +278,7 @@ export function ImportDialog({
               >
                 <FileSpreadsheet size={32} aria-hidden />
                 <strong>Drop CSV, XLSX, XLS or ODS</strong>
-                <span>or browse · up to 15 MB · first 400 rows are generated</span>
+                <span>or browse · up to 15 MB · big lists generate in chunks of 400</span>
                 <input type="file" className="sr-only" accept=".csv,.xlsx,.xls,.ods,text/csv" onChange={onFileInput} disabled={busy} />
               </label>
               <button type="button" className="btn btn-ghost self-start" onClick={loadSample} disabled={busy} data-loading={busy || undefined}>
@@ -319,7 +319,7 @@ export function ImportDialog({
           </p>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            <div className="dash-stat"><span>Rows</span><strong>{mapped.length}</strong><small>{mapped.length > 400 ? 'First 400 generate per batch' : 'All generate in one batch'}</small></div>
+            <div className="dash-stat"><span>Rows</span><strong>{mapped.length}</strong><small>{mapped.length > 400 ? `All generate, in ${Math.ceil(mapped.length / 400)} chunks of 400` : 'All generate in one batch'}</small></div>
             <div className="dash-stat"><span>Matched fields</span><strong>{matched.length}</strong><small>{customs.length} extra columns kept as merge tags</small></div>
             <div className="dash-stat"><span>Unknown merge tags</span><strong>{unknownTags.length}</strong><small>{unknownTags.length ? 'Not found in this list' : 'Copy matches this list'}</small></div>
           </div>

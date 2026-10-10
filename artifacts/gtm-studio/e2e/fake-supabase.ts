@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from '@playwright/test';
+import type { BrowserContext, Page, Request } from '@playwright/test';
 
 export const userId = '00000000-0000-4000-8000-000000000001';
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'operator@dgk.internal', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
@@ -12,9 +12,22 @@ export type FakeOptions = {
   campaigns?: Record<string, unknown>[];
   /** Rows served for GET /rest/v1/outbound_folders. */
   folders?: Record<string, unknown>[];
+  /** Rows served for GET /rest/v1/outbound_assets (filtered by `campaign_id=eq.` when asked). */
+  assets?: Record<string, unknown>[];
+  /** Objects in the asset bucket, for storage list (sizes) and remove. */
+  storageObjects?: Array<{ path: string; size: number }>;
 };
 
+/** `table` is the REST table, or `storage:list` / `storage:remove` for bucket calls. */
 export type FakeRequest = { method: string; table: string; url: string; body: unknown };
+
+function requestBody(request: Request) {
+  try {
+    return request.postDataJSON();
+  } catch {
+    return request.postData();
+  }
+}
 
 /**
  * Answers every Supabase call locally: an operator session, empty tables (or the given campaign
@@ -24,21 +37,35 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
   const { signedIn = true, failLists = false, contacts, mode } = options;
   const campaigns = [...(options.campaigns ?? [])];
   const folders = options.folders ?? [];
+  const assets = [...(options.assets ?? [])];
+  const objects = [...(options.storageObjects ?? [])];
   const requests: FakeRequest[] = [];
   await context.route(/supabase\.co/, (route) => {
     const request = route.request();
     const url = request.url();
     const method = request.method();
     if (url.includes('/auth/v1/user')) return route.fulfill({ json: user });
+    if (url.includes('/storage/v1/object/list/')) {
+      const body = requestBody(request) as { prefix?: string } | null;
+      requests.push({ method, table: 'storage:list', url, body });
+      const prefix = String(body?.prefix ?? '').replace(/\/$/, '');
+      const listed = objects
+        .filter((item) => item.path.slice(0, item.path.lastIndexOf('/')) === prefix)
+        .map((item) => ({ name: item.path.slice(item.path.lastIndexOf('/') + 1), id: item.path, metadata: { size: item.size } }));
+      return route.fulfill({ json: listed });
+    }
+    if (url.includes('/storage/v1/object/') && method === 'DELETE') {
+      const body = requestBody(request) as { prefixes?: string[] } | null;
+      requests.push({ method, table: 'storage:remove', url, body });
+      const wanted = new Set(body?.prefixes ?? []);
+      const removed = objects.filter((item) => wanted.has(item.path));
+      for (const item of removed) objects.splice(objects.indexOf(item), 1);
+      return route.fulfill({ json: removed.map((item) => ({ name: item.path })) });
+    }
     if (url.includes('/storage/v1/')) return route.fulfill({ json: { Key: 'ok' } });
     if (url.includes('/rest/v1/')) {
       const table = new URL(url).pathname.split('/rest/v1/')[1]?.split('/')[0] ?? '';
-      let body: unknown = null;
-      try {
-        body = request.postDataJSON();
-      } catch {
-        body = request.postData();
-      }
+      const body: unknown = requestBody(request);
       if (method !== 'GET' && method !== 'HEAD') requests.push({ method, table, url, body });
       // 500 is not retried by the Supabase client, so the error shows at once.
       if (failLists && method === 'GET') return route.fulfill({ status: 500, json: { message: 'Internal error' } });
@@ -70,6 +97,10 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
         }
       }
       if (table === 'outbound_folders' && method === 'GET') return route.fulfill({ json: folders });
+      if (table === 'outbound_assets' && method === 'GET') {
+        const campaignId = new URL(url).searchParams.get('campaign_id')?.replace(/^eq\./, '');
+        return route.fulfill({ json: campaignId ? assets.filter((row) => row.campaign_id === campaignId) : assets });
+      }
       return route.fulfill({ json: [] });
     }
     return route.fulfill({ json: {} });
@@ -86,7 +117,7 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // Storage blocked; the app still renders signed out.
     }
   }, [signedIn, JSON.stringify(session), mode ? `gtm-contacts:${userId}:${mode}` : '', contacts ? JSON.stringify(contacts) : ''] as const);
-  return { requests, campaigns };
+  return { requests, campaigns, assets, objects };
 }
 
 /** A saved campaign row as Supabase returns it. */

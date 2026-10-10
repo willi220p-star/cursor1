@@ -14,6 +14,7 @@ import { PAGE_FORMATS, PageFormat } from "@/carousel/lib/page-size";
 import { defaultValues } from "@/carousel/lib/default-document";
 import { useStudio } from "@/carousel/lib/providers/studio-context";
 import { CarouselLibraryDialog } from "@/carousel/components/carousel-library";
+import { GuideButton } from "@/components/studio/guide-sheet";
 
 export function CarouselHeader() {
   const form: DocumentFormReturn = useFormContext();
@@ -48,6 +49,7 @@ export function CarouselHeader() {
           ))}
         </div>
         <div className="toolbar-actions flex flex-wrap items-center justify-end gap-2">
+          <GuideButton guideKey="carousel" />
           <button type="button" className="btn btn-quiet" onClick={() => setLibraryOpen(true)}>
             <FolderOpen size={16} aria-hidden /> Library
           </button>

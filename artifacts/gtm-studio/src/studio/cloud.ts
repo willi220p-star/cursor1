@@ -838,7 +838,7 @@ export async function setCampaignClient(campaign: SavedCampaign, client: string,
 /** Adds a history event to a saved campaign without a full save (used for exports). */
 export async function appendCampaignHistory(
   campaignId: string,
-  event: { kind: 'generated' | 'uploaded' | 'exported'; rows: number; at?: string },
+  event: { kind: import('./types').CampaignEventKind; rows: number; at?: string },
   userId?: string,
 ) {
   const at = event.at ?? new Date().toISOString();
@@ -1036,13 +1036,25 @@ function rowFromAssetRecord(row: {
 
 export async function listStudioAssets(userId: string, mode: StudioMode, campaignId?: string, campaignName?: string) {
   if (!supabase) return [];
-  const { data, error } = await supabase
+  // Paged, so a campaign of thousands of rows reviews in full (not just the newest 400 files).
+  const client = supabase;
+  const pageSize = 1000;
+  const fetchPage = (from: number) => client
     .from('outbound_assets')
     .select('id,filename,public_url,bytes,contact_key,content_type,campaign_id,storage_path,metadata,created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
-    .limit(400);
-  if (error || !data) return [];
+    .range(from, from + pageSize - 1);
+  const data: NonNullable<Awaited<ReturnType<typeof fetchPage>>['data']> = [];
+  for (let from = 0; from < 20_000; from += pageSize) {
+    const page = await fetchPage(from);
+    if (page.error || !page.data) {
+      if (!data.length) return [];
+      break;
+    }
+    data.push(...page.data);
+    if (page.data.length < pageSize) break;
+  }
   const slug = campaignSlug(campaignName || `${mode} campaign`);
   const generated = campaignAssetRows(data, { campaignId, slug });
   const seen = new Set<string>();
