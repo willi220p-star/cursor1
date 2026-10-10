@@ -37,6 +37,9 @@ export function exportsInLast30Days(scope: string) {
   return readExports(scope).filter((event) => event.at >= cutoff).reduce((sum, event) => sum + event.count, 0);
 }
 
+/** Fired on window when saved work changes outside the Library (e.g. duplicated from search). */
+export const LIBRARY_CHANGED_EVENT = 'gtm-studio-library-changed';
+
 /** Desk → studio hand-off: ask the next studio to load the bundled sample list on mount. */
 export function requestSampleList(scope: string) {
   localStorage.setItem(`${SAMPLE_FLAG}:${scope}`, '1');

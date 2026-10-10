@@ -60,3 +60,29 @@ test('Generate makes every row and marks each one ready', async ({ page, context
   await expect(page.locator('.row-dot.is-failed')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test('Generate again offers to redo only the rows that changed', async ({ page, context }) => {
+  await fakeSupabase(context, { mode: 'memes', contacts: sampleContacts(6) });
+  const errors = collectErrors(page);
+  const uploads: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/storage/v1/object/outbound-assets/')) uploads.push(request.url());
+  });
+  await page.goto('/memes');
+  await expect(page.getByRole('radio', { name: /^Row 6:/ })).toBeVisible();
+  await page.locator('.toolbar-actions .btn-primary').click();
+  await expect(page.locator('.batch-progress')).toBeHidden({ timeout: 60_000 });
+  await expect.poll(() => uploads.length).toBe(6);
+  await page.keyboard.press('Escape');
+
+  await page.locator('.toolbar-actions .btn-primary').click();
+  const dialog = page.getByTestId('regenerate-dialog');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Regenerate all' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Regenerate changed rows only (0 of 6)' }).click();
+  await expect(page.locator('.row-dot.is-done')).toHaveCount(6);
+  // Nothing changed, so nothing was drawn or uploaded again.
+  await page.waitForTimeout(500);
+  expect(uploads).toHaveLength(6);
+  expect(errors).toEqual([]);
+});

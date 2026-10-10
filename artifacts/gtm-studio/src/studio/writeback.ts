@@ -2,6 +2,7 @@ import Papa from 'papaparse';
 import { stripHookMarks } from './hook-mark';
 import { contactColumns } from './importers';
 import { renderMerge } from './merge';
+import { rowRenderHash } from './row-hash';
 import { configForRow, openerFor, rowVariant } from './variants';
 import { isCutRoom, isPaperDesk, type Contact, type GeneratedAsset, type StudioConfig, type StudioMode } from './types';
 
@@ -11,6 +12,8 @@ export type StudioOutputColumns = {
   status: string;
   /** Plain-text version of what the image says, for the email's alt text. */
   alt: string;
+  /** Hash of the row's render inputs when its file was made (row-hash.ts): unchanged rows can skip a rerender. */
+  hash: string;
   /** A/B copy split and the opener behind the copy. Only studios that write a message have them. */
   variant?: string;
   opener?: string;
@@ -22,6 +25,7 @@ function columnsWithPrefix(prefix: string, split: boolean): StudioOutputColumns 
     url: `${prefix}_url`,
     status: `${prefix}_status`,
     alt: `${prefix}_alt`,
+    hash: `${prefix}_hash`,
     ...(split ? { variant: `${prefix}_variant`, opener: `${prefix}_opener` } : {}),
   };
 }
@@ -87,7 +91,7 @@ export function outputColumnsFor(mode: StudioMode): StudioOutputColumns {
 
 export function outputColumnNames(mode: StudioMode) {
   const cols = outputColumnsFor(mode);
-  return [cols.file, cols.url, cols.status, cols.alt, ...(cols.variant ? [cols.variant] : []), ...(cols.opener ? [cols.opener] : []), 'image_url', 'smartlead_image_url'];
+  return [cols.file, cols.url, cols.status, cols.alt, cols.hash, ...(cols.variant ? [cols.variant] : []), ...(cols.opener ? [cols.opener] : []), 'image_url', 'smartlead_image_url'];
 }
 
 export function persistListMeta(scope: string, modes: StudioMode[], meta: ListMeta) {
@@ -183,6 +187,7 @@ export function stampStudioOutputs(rows: Contact[], assets: GeneratedAsset[], mo
       extra[cols.alt] = altTextFor(config, row, mode);
       if (cols.variant && isPaperDesk(mode)) extra[cols.variant] = rowVariant(config, row);
       if (cols.opener && isPaperDesk(mode)) extra[cols.opener] = openerFor(config, row);
+      extra[cols.hash] = failed ? '' : rowRenderHash(config, row, mode);
     }
     return {
       ...row,

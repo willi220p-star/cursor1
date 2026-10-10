@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { ArrowUpDown, Database, FileText, Folder, FolderInput, FolderPlus, MoreHorizontal, Pencil, Search, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ArrowUpDown, Copy, Database, FileText, Folder, FolderInput, FolderPlus, History, MoreHorizontal, Pencil, Search, Tag, Trash2 } from 'lucide-react';
 import { Link } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -7,6 +7,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
@@ -14,9 +15,19 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { relativeTime } from '@/studio/activity';
+import {
+  campaignClient,
+  campaignSearchText,
+  campaignStatus,
+  formatHistoryEntry,
+  knownClients,
+  recentHistory,
+  statusLabels,
+} from '@/studio/campaign-status';
 import { reportError } from '@/lib/report';
 import {
   createFileFolder,
+  duplicateCampaign,
   listCampaigns,
   listFileFolders,
   listStoredFiles,
@@ -32,6 +43,7 @@ import {
   renameFileFolder,
   renameStoredFile,
   renameTemplateConfig,
+  setCampaignClient,
   type FileFolder,
   type StoredFile,
 } from '@/studio/cloud';
@@ -48,7 +60,8 @@ type NameRequest =
   | { kind: 'rename-folder'; folder: FileFolder }
   | { kind: 'rename-file'; file: StoredFile }
   | { kind: 'rename-template'; template: SavedTemplate }
-  | { kind: 'rename-campaign'; campaign: SavedCampaign };
+  | { kind: 'rename-campaign'; campaign: SavedCampaign }
+  | { kind: 'set-client'; campaign: SavedCampaign };
 
 type KindFilter = 'all' | LibraryItem['kind'];
 
@@ -72,6 +85,20 @@ function itemDetail(item: LibraryItem) {
     return `${studioInfo(item.campaign.mode).label} campaign with ${rows} ${rows === 1 ? 'row' : 'rows'}`;
   }
   return item.file.label;
+}
+
+/** How long a deleted item can be brought back before it is really deleted. */
+export const UNDO_DELETE_MS = 10_000;
+
+const ALL_CLIENTS = '__all';
+const NO_CLIENT = '__none';
+
+const itemKey = (item: Pick<LibraryItem, 'kind' | 'id'>) => `${item.kind}-${item.id}`;
+
+function removeItem(item: LibraryItem, userId?: string) {
+  if (item.kind === 'template') return removeTemplateConfig(item.template, userId);
+  if (item.kind === 'campaign') return removeCampaign(item.campaign, userId);
+  return removeStoredFile(item.file, userId);
 }
 
 export function Library({
@@ -103,6 +130,15 @@ export function Library({
   const [previewBroken, setPreviewBroken] = useState(false);
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<KindFilter>('all');
+  const [clientFilter, setClientFilter] = useState(ALL_CLIENTS);
+  // Deletes wait UNDO_DELETE_MS so they can be undone; these rows are hidden meanwhile.
+  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
+  const pendingDeletes = useRef(new Map<string, { item: LibraryItem; timer: number; toastId: string | number }>());
+  const mounted = useRef(true);
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
+  const userIdRef = useRef(userId);
+  userIdRef.current = userId;
 
   const [loadFailed, setLoadFailed] = useState<string[]>([]);
   const load = () => {
@@ -167,15 +203,35 @@ export function Library({
     return next;
   }, [templates, campaigns, files, sortDesc]);
 
+  const clients = useMemo(() => knownClients(campaigns ?? []), [campaigns]);
+  useEffect(() => {
+    if (clientFilter !== ALL_CLIENTS && clientFilter !== NO_CLIENT && campaigns && !clients.includes(clientFilter)) setClientFilter(ALL_CLIENTS);
+  }, [clients, clientFilter, campaigns]);
+  // Search text per item, built once per load: name, kind, client and (for campaigns) the
+  // company values in the list, capped so big lists stay quick.
+  const searchText = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of items) {
+      const base = `${item.name} ${itemDetail(item)}`.toLowerCase();
+      map.set(itemKey(item), item.kind === 'campaign' ? `${base} ${campaignSearchText(item.campaign)}` : base);
+    }
+    return map;
+  }, [items]);
+
   const needle = query.trim().toLowerCase();
-  // A search looks in every folder; otherwise show the open folder (or the loose items).
-  const visibleItems = items.filter((item) => {
+  const liveItems = items.filter((item) => !pendingKeys.includes(itemKey(item)));
+  const clientItems = clientFilter === ALL_CLIENTS
+    ? liveItems
+    : liveItems.filter((item) => item.kind === 'campaign' && (clientFilter === NO_CLIENT ? !campaignClient(item.campaign) : campaignClient(item.campaign) === clientFilter));
+  // A search (or a client filter) looks in every folder; otherwise show the open folder (or the loose items).
+  const visibleItems = clientItems.filter((item) => {
     if (kind !== 'all' && item.kind !== kind) return false;
-    if (needle) return `${item.name} ${itemDetail(item)}`.toLowerCase().includes(needle);
+    if (needle) return (searchText.get(itemKey(item)) ?? '').includes(needle);
+    if (clientFilter !== ALL_CLIENTS) return true;
     return openFolder ? item.folderId === openFolder.id : !item.folderId;
   });
-  const kindCount = (value: KindFilter) => (value === 'all' ? items.length : items.filter((item) => item.kind === value).length);
-  const folderCount = (folderId: string) => items.filter((item) => item.folderId === folderId).length;
+  const kindCount = (value: KindFilter) => (value === 'all' ? clientItems.length : clientItems.filter((item) => item.kind === value).length);
+  const folderCount = (folderId: string) => liveItems.filter((item) => item.folderId === folderId).length;
   const libraryEmpty = loaded && items.length === 0 && (folders?.length ?? 0) === 0;
 
   const ask = (request: NameRequest, current = '') => {
@@ -187,7 +243,9 @@ export function Library({
     if (!naming || savingName) return;
     setSavingName(true);
     try {
-      const result = naming.kind === 'create-folder'
+      const result = naming.kind === 'set-client'
+        ? await setCampaignClient(naming.campaign, draft, userId)
+        : naming.kind === 'create-folder'
         ? await createFileFolder(draft, userId)
         : naming.kind === 'rename-folder'
           ? await renameFileFolder(naming.folder.id, draft, userId)
@@ -202,7 +260,7 @@ export function Library({
       }
       setNaming(null);
       onChanged();
-      toast.success(naming.kind === 'create-folder' ? 'Folder created' : 'Name saved');
+      toast.success(naming.kind === 'create-folder' ? 'Folder created' : naming.kind === 'set-client' ? (draft.trim() ? `Client set to ${draft.trim()}` : 'Client cleared') : 'Name saved');
     } finally {
       setSavingName(false);
     }
@@ -221,20 +279,84 @@ export function Library({
     }
   };
 
+  /** Runs a waiting delete now. Also used when the Library goes away, so no delete is lost. */
+  const commitDelete = (key: string) => {
+    const entry = pendingDeletes.current.get(key);
+    if (!entry) return;
+    pendingDeletes.current.delete(key);
+    window.clearTimeout(entry.timer);
+    toast.dismiss(entry.toastId);
+    const { item } = entry;
+    const fail = (description: string) => {
+      toast.error(`Could not delete ${item.name}`, { description });
+      if (mounted.current) setPendingKeys((current) => current.filter((value) => value !== key));
+    };
+    void removeItem(item, userIdRef.current)
+      .then((result) => {
+        if (result.syncError) fail(result.syncError);
+      })
+      .catch((error) => {
+        reportError(error, { area: 'library', action: 'delete' });
+        fail(error instanceof Error ? error.message : 'The delete did not go through.');
+      })
+      .finally(() => {
+        if (mounted.current) onChangedRef.current();
+      });
+  };
+
+  const undoDelete = (key: string) => {
+    const entry = pendingDeletes.current.get(key);
+    if (!entry) return;
+    pendingDeletes.current.delete(key);
+    window.clearTimeout(entry.timer);
+    setPendingKeys((current) => current.filter((value) => value !== key));
+    toast.success(`${entry.item.name} restored`);
+  };
+
   const deleteItem = (item: LibraryItem) => {
-    if (busyId) return;
-    if (item.kind === 'template') {
-      if (!window.confirm(`Delete “${item.name}”? It will be removed from this studio and from Supabase.`)) return;
-      void run(item.id, () => removeTemplateConfig(item.template, userId), `${item.name} deleted`, `Could not delete ${item.name}`);
-      return;
-    }
-    if (item.kind === 'campaign') {
-      if (!window.confirm(`Delete “${item.name}”? The campaign and its stored files will be removed from Supabase.`)) return;
-      void run(item.id, () => removeCampaign(item.campaign, userId), `${item.name} deleted`, `Could not delete ${item.name}`);
-      return;
-    }
-    if (!window.confirm(`Delete “${item.name}” from Supabase?`)) return;
-    void run(item.id, () => removeStoredFile(item.file, userId), `${item.name} deleted`, `Could not delete ${item.name}`);
+    const key = itemKey(item);
+    if (busyId || pendingDeletes.current.has(key)) return;
+    const what = item.kind === 'campaign' ? 'Campaign and its stored files' : item.kind === 'template' ? 'Template' : 'File';
+    const toastId = toast(`${item.name} deleted`, {
+      description: `${what} will be removed from Supabase in ${UNDO_DELETE_MS / 1000} seconds.`,
+      duration: UNDO_DELETE_MS,
+      action: { label: 'Undo', onClick: () => undoDelete(key) },
+    });
+    const timer = window.setTimeout(() => commitDelete(key), UNDO_DELETE_MS);
+    pendingDeletes.current.set(key, { item, timer, toastId });
+    setPendingKeys((current) => [...current, key]);
+  };
+
+  // Leaving the page (or closing the tab) runs any waiting deletes at once instead of dropping them.
+  useEffect(() => {
+    mounted.current = true;
+    const flush = () => [...pendingDeletes.current.keys()].forEach((key) => commitDelete(key));
+    window.addEventListener('pagehide', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      mounted.current = false;
+      flush();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const duplicateItem = (item: LibraryItem) => {
+    if (item.kind !== 'campaign' || busyId) return;
+    setBusyId(item.id);
+    void duplicateCampaign(item.campaign, userId, (campaigns ?? []).map((campaign) => campaign.name))
+      .then((result) => {
+        onChanged();
+        if (result.syncError) toast.error(`Could not fully copy ${item.name}`, { description: result.syncError });
+        else if (result.campaign) {
+          const copy = result.campaign;
+          toast.success(`Copied as ${copy.name}`, { action: { label: 'Open', onClick: () => onOpenCampaign(copy) } });
+        }
+      })
+      .catch((error) => {
+        reportError(error, { area: 'library', action: 'duplicate' });
+        toast.error(`Could not copy ${item.name}`, { description: error instanceof Error ? error.message : undefined });
+      })
+      .finally(() => setBusyId(null));
   };
 
   const deleteFolder = (folder: FileFolder) => {
@@ -272,7 +394,9 @@ export function Library({
     if (!opened) toast.error('Allow pop-ups to open that file.');
   };
 
-  const nameLabel = naming?.kind === 'rename-file'
+  const nameLabel = naming?.kind === 'set-client'
+    ? 'Client'
+    : naming?.kind === 'rename-file'
     ? 'File name'
     : naming?.kind === 'rename-template' || naming?.kind === 'rename-campaign'
       ? 'Name'
@@ -302,11 +426,21 @@ export function Library({
             </button>
           ))}
         </div>
+        {(clients.length > 0 || clientFilter !== ALL_CLIENTS) && (
+          <label className="client-filter">
+            <span className="sr-only">Client</span>
+            <select className="field" value={clientFilter} onChange={(event) => setClientFilter(event.target.value)} aria-label="Filter by client">
+              <option value={ALL_CLIENTS}>All clients</option>
+              {clients.map((client) => <option key={client} value={client}>{client}</option>)}
+              <option value={NO_CLIENT}>No client</option>
+            </select>
+          </label>
+        )}
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSortDesc((value) => !value)} aria-label={sortDesc ? 'Sorted newest first. Show oldest first.' : 'Sorted oldest first. Show newest first.'}>
           <ArrowUpDown size={15} aria-hidden /> {sortDesc ? 'Newest first' : 'Oldest first'}
         </button>
       </div>
-      {!needle && (
+      {!needle && clientFilter === ALL_CLIENTS && (
         <div className="chip-row" role="group" aria-label="Folders">
           <button type="button" className="chip" aria-pressed={!openFolder} onClick={() => setOpenId(null)}>Library</button>
           {folders?.map((folder) => (
@@ -349,6 +483,9 @@ export function Library({
           <ul className="group-list">
             {visibleItems.map((item) => {
               const mode = itemMode(item);
+              const status = item.kind === 'campaign' ? campaignStatus(item.campaign.config) : null;
+              const history = item.kind === 'campaign' ? recentHistory(item.campaign.config) : [];
+              const client = item.kind === 'campaign' ? campaignClient(item.campaign) : '';
               return (
                 <li
                   key={`${item.kind}-${item.id}`}
@@ -363,8 +500,19 @@ export function Library({
                     {mode ? studioInitial(mode) : <FileText size={18} />}
                   </span>
                   <span className="item-text">
-                    <strong title={item.name}>{item.name}</strong>
-                    <small>{itemDetail(item)}</small>
+                    <span className="item-title">
+                      <strong title={item.name}>{item.name}</strong>
+                      {status && (
+                        <span
+                          className="status-pill"
+                          data-status={status}
+                          title={history.length ? history.map(formatHistoryEntry).join('\n') : 'Not generated yet'}
+                        >
+                          {statusLabels[status]}
+                        </span>
+                      )}
+                    </span>
+                    <small>{client && <><span className="client-tag">{client}</span> · </>}{itemDetail(item)}</small>
                   </span>
                   <span className="item-when" title={new Date(item.at).toLocaleString()}>{relativeTime(item.at)}</span>
                   <span className="flex flex-none items-center gap-2" onClick={(event) => event.stopPropagation()}>
@@ -380,11 +528,36 @@ export function Library({
                       >
                         <Pencil aria-hidden /> Rename
                       </DropdownMenuItem>
+                      {item.kind === 'campaign' && (
+                        <>
+                          <DropdownMenuItem className="min-h-11" onSelect={() => duplicateItem(item)}>
+                            <Copy aria-hidden /> Duplicate
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="min-h-11" onSelect={() => ask({ kind: 'set-client', campaign: item.campaign }, client)}>
+                            <Tag aria-hidden /> {client ? 'Change client…' : 'Set client…'}
+                          </DropdownMenuItem>
+                        </>
+                      )}
                       <MoveMenu current={item.folderId} folders={folders ?? []} onMove={(folderId) => moveItem(item, folderId)} />
                       <DropdownMenuSeparator />
                       <DropdownMenuItem className="min-h-11 text-destructive focus:text-destructive" onSelect={() => deleteItem(item)}>
                         <Trash2 aria-hidden /> Delete
                       </DropdownMenuItem>
+                      {item.kind === 'campaign' && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuLabel className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                            <History size={14} aria-hidden /> History
+                          </DropdownMenuLabel>
+                          {history.length ? history.map((event) => (
+                            <p key={`${event.at}-${event.kind}`} className="px-2 py-1 text-xs text-muted-foreground" data-history-entry>
+                              {formatHistoryEntry(event)}
+                            </p>
+                          )) : (
+                            <p className="px-2 py-1 text-xs text-muted-foreground">Draft. Nothing generated yet.</p>
+                          )}
+                        </>
+                      )}
                     </ActionsMenu>
                   </span>
                 </li>
@@ -410,10 +583,12 @@ export function Library({
         ) : (
           <div className="group-list empty-state">
             {needle ? <Search size={24} className="text-muted-foreground" aria-hidden /> : <Folder size={24} className="text-muted-foreground" aria-hidden />}
-            <h3>{needle ? 'Nothing matches that' : openFolder ? 'This folder is empty' : kind !== 'all' ? 'Nothing of that kind here' : 'Everything is in a folder'}</h3>
+            <h3>{needle ? 'Nothing matches that' : clientFilter !== ALL_CLIENTS ? 'No campaigns for that client' : openFolder ? 'This folder is empty' : kind !== 'all' ? 'Nothing of that kind here' : 'Everything is in a folder'}</h3>
             <p>
               {needle
-                ? 'Try part of a name, a studio, or a file type like PNG.'
+                ? 'Try part of a name, a client, a company on the list, a studio, or a file type like PNG.'
+                : clientFilter !== ALL_CLIENTS
+                  ? 'Open the three dots on a campaign and choose Set client.'
                 : openFolder
                   ? 'Open the three dots on a template, file, or campaign and choose Move.'
                   : 'Open a folder to see what is inside, or leave new work here in the library.'}
@@ -448,10 +623,12 @@ export function Library({
         <DialogContent className="rounded-[12px] border-border bg-card">
           <DialogHeader>
             <DialogTitle className="display text-2xl font-semibold">
-              {naming?.kind === 'create-folder' ? 'New folder' : naming?.kind === 'rename-folder' ? 'Rename folder' : 'Rename'}
+              {naming?.kind === 'create-folder' ? 'New folder' : naming?.kind === 'rename-folder' ? 'Rename folder' : naming?.kind === 'set-client' ? 'Set client' : 'Rename'}
             </DialogTitle>
             <DialogDescription>
-              {naming?.kind === 'rename-file'
+              {naming?.kind === 'set-client'
+                ? 'Who this campaign is for. Filter and search the library by client. Leave empty to clear it.'
+                : naming?.kind === 'rename-file'
                 ? 'This changes the name in your library. The Supabase link stays the same.'
                 : naming?.kind === 'create-folder' || naming?.kind === 'rename-folder'
                   ? 'Folders can hold templates, files, and campaigns. They are saved in Supabase for this operator.'
@@ -471,11 +648,18 @@ export function Library({
               className="field"
               value={draft}
               autoFocus
-              maxLength={naming?.kind === 'create-folder' || naming?.kind === 'rename-folder' ? 80 : 120}
+              list={naming?.kind === 'set-client' ? 'library-clients' : undefined}
+              autoComplete="off"
+              maxLength={naming?.kind === 'create-folder' || naming?.kind === 'rename-folder' || naming?.kind === 'set-client' ? 80 : 120}
               onChange={(event) => setDraft(event.target.value)}
             />
-            <button type="submit" className="btn btn-primary" disabled={savingName || !draft.trim()}>
-              {naming?.kind === 'create-folder' ? 'Create folder' : 'Save name'}
+            {naming?.kind === 'set-client' && (
+              <datalist id="library-clients">
+                {clients.map((client) => <option key={client} value={client} />)}
+              </datalist>
+            )}
+            <button type="submit" className="btn btn-primary" disabled={savingName || (naming?.kind !== 'set-client' && !draft.trim())}>
+              {naming?.kind === 'create-folder' ? 'Create folder' : naming?.kind === 'set-client' ? 'Save client' : 'Save name'}
             </button>
           </form>
         </DialogContent>

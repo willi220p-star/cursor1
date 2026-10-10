@@ -553,7 +553,14 @@ export type StudioConfig = {
   listSource?: string;
   sourceColumns?: string[];
   sourceFileUrl?: string;
+  /** Agency client this campaign is for. Free text; the Library filters and searches on it. */
+  client?: string;
+  /** Generated, uploaded and exported runs, oldest first (see campaign-status.ts). */
+  history?: CampaignEvent[];
 };
+
+export type CampaignEventKind = 'generated' | 'uploaded' | 'exported';
+export type CampaignEvent = { at: string; kind: CampaignEventKind; rows: number };
 
 export type SavedTemplate = {
   id: string;

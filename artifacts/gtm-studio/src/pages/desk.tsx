@@ -4,7 +4,8 @@ import { CircleUser, Film, Image, Pencil } from 'lucide-react';
 import { Library } from '@/components/studio/library';
 import { PanelBoundary } from '@/components/error-boundary';
 import { publicAssetUrl } from '@/lib/public-url';
-import { exportsInLast30Days, requestSampleList } from '@/studio/activity';
+import { exportsInLast30Days, LIBRARY_CHANGED_EVENT, requestSampleList } from '@/studio/activity';
+import { campaignClient, campaignStatus, formatHistoryEntry, recentHistory, statusLabels } from '@/studio/campaign-status';
 import { listCampaigns, subscribeTemplateChanges } from '@/studio/cloud';
 import { reportError } from '@/lib/report';
 import { renderMerge } from '@/studio/merge';
@@ -62,7 +63,13 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
   };
   useEffect(() => {
     refreshStats();
-    return subscribeTemplateChanges(userId, refreshDesk);
+    // Search (Ctrl+K) can duplicate a campaign from any page; refresh when it does.
+    window.addEventListener(LIBRARY_CHANGED_EVENT, refreshDesk);
+    const unsubscribe = subscribeTemplateChanges(userId, refreshDesk);
+    return () => {
+      window.removeEventListener(LIBRARY_CHANGED_EVENT, refreshDesk);
+      unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
 
@@ -84,6 +91,9 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
   const latestStudio = latest ? studioInfo(latest.mode) : null;
+  const latestStatus = latest ? campaignStatus(latest.config) : null;
+  const latestEvent = latest ? recentHistory(latest.config, 1)[0] : undefined;
+  const latestClient = latest ? campaignClient(latest) : '';
   const sceneLabel = latest
     ? `Open ${latest.name} in ${latestStudio?.label}`
     : 'Load the sample list in Notes';
@@ -113,6 +123,13 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
               </>
             )}
           </div>
+          {latest && latestStatus && (
+            <p className="desk-continue-meta" data-testid="continue-status">
+              <span className="status-pill" data-status={latestStatus}>{statusLabels[latestStatus]}</span>
+              <span>{latestEvent ? formatHistoryEntry(latestEvent) : 'Nothing generated yet'}</span>
+              {latestClient && <span>· {latestClient}</span>}
+            </p>
+          )}
           {campaignsFailed && (
             <div className="load-error" role="alert">
               <span>Could not load your campaigns, so these numbers may be wrong.</span>
