@@ -1,7 +1,7 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
-import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, stillFormatFor, coverCropRect, defaultCrop, finishPaperZone, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
+import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands, writingSpeedSpec } from './types';
 import { renderMerge } from './merge';
 import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
 import { drawCaptionLayer, highlightWords } from './caption-draw';
@@ -858,7 +858,7 @@ const handwritingScales: Record<string, number> = {
   'Gloria Hallelujah': 0.84,
 };
 
-function handwritingScale(fontFamily: string) {
+export function handwritingScale(fontFamily: string) {
   return handwritingScales[fontFamily] ?? 1;
 }
 
@@ -1457,7 +1457,7 @@ export async function measureNoteFit(config: StudioConfig, contact: Contact) {
   const target = dimensions[config.channel] ?? dimensions.LinkedIn;
   const seed = (config.seed ?? 7) + contact.row;
   const finish = config.shuffleFinish ? pickFrom(['desk', 'scanned', 'soft-shadow', 'clean'] as NoteFinish[], seed) : (config.finish ?? 'desk');
-  const zone = config.noteZone ?? finishPaperZone(finish);
+  const zone = config.noteZone ?? cardZone(finish, config.cardFill);
   const fontFamily = config.shuffleHandwriting ? pickFrom(handwritingFonts, seed + 11) : (config.fontFamily || 'Homemade Apple');
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
@@ -1477,7 +1477,9 @@ function drawPenProp(
   scale: number,
   seed: number,
 ) {
-  const length = paperH * 0.92;
+  // Sized to the card's height, but never longer than a pen would be next to a narrow or square card,
+  // so on a zoomed-in portrait card the nib still lands inside the frame.
+  const length = Math.min(paperH, paperW * 0.9) * 0.92;
   const thick = Math.max(10 * scale, length * 0.058);
   const cx = paperX + paperW * (0.985 + unitRand(seed, 301) * 0.02);
   const cy = paperY + paperH * (0.6 + unitRand(seed, 302) * 0.08);
@@ -1654,7 +1656,7 @@ export async function renderStudioCanvas(
       context.fillRect(0, 0, width, height);
     }
 
-    const zone = config.noteZone ?? finishPaperZone(finish);
+    const zone = config.noteZone ?? cardZone(finish, config.cardFill);
     const paperX = width * zone.x;
     const paperY = height * zone.y;
     const paperW = width * zone.width;

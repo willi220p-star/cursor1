@@ -95,6 +95,8 @@ import {
 import { CopyTemplateControls } from '@/components/studio/copy-template-controls';
 import { OpenerLibrary } from '@/components/studio/opener-library';
 import { HookControls } from '@/components/studio/hook-controls';
+import { AudiencePicker } from '@/components/studio/audience-picker';
+import { wordTargetFor } from '@/studio/audience';
 import {
   contactsStorageKey,
   hydratePortraits,
@@ -112,7 +114,7 @@ import {
   cropLayerStyle,
   defaultCrop,
   deskSurfaces,
-  finishPaperZone,
+  cardZone,
   stillFormatFor,
   stillFormats,
   guessAvatarColumn,
@@ -454,7 +456,7 @@ export function StudioGenerator({
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [config, contact, mode]);
   const noteWords = countWords(`${renderMerge(config.copy, contact, mergeOptions)} ${config.postscript ? renderMerge(config.postscript, contact, mergeOptions) : ''}`);
-  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit);
+  const lengthAdvice = noteAdvice(noteWords, config.fontSize, noteFit, wordTargetFor(config));
   const avatarSource = resolveAvatarSource(config, contact);
   const previewMessage = resolveMessage(config, contact);
   const animatedExport = exportIsAnimated(mode, config);
@@ -1282,8 +1284,8 @@ export function StudioGenerator({
   const handwritingMode = mode === 'handwritten' || mode === 'handgif';
 
   const applyFinish = (finish: StudioConfig['finish']) => {
-    const note = finishPaperZone(finish);
     setConfig((current) => {
+      const note = cardZone(finish, current.cardFill);
       if (mode === 'avatar') {
         const layout = avatarInNoteLayout(current.channel, current.avatarZone.width, note);
         return { ...current, finish, noteZone: layout.note, avatarZone: layout.avatar, textZone: layout.text };
@@ -2289,6 +2291,7 @@ export function StudioGenerator({
       )}
       {handwritingMode ? (
         <>
+          <AudiencePicker config={config} setConfig={setConfig} />
           <Section title="Handwriting">
             <FieldRow id="handwriting-style" label="Writing style" hint="Handwriting 1 to 7. The note uses the one you pick.">
               <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
