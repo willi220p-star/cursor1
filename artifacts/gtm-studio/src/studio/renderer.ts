@@ -1,12 +1,12 @@
 import { publicAssetUrl } from '@/lib/utils';
 import type { AvatarShape, Contact, CropFocus, DeskSurface, NoteFinish, StudioConfig, StudioMode } from './types';
 import { baselineAt, buildRuleGrid, rowsAvailable, rowsNeeded, type RuleGrid } from './note-layout';
-import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands } from './types';
+import { AVATAR_CACHE_FIELD, AVATAR_SOURCE_FIELD, canvasSizes, cardZone, stillFormatFor, coverCropRect, defaultCrop, handwritingStyles, legacyHandwritingFonts, migrateDeskSurface, migrateWritingHand, writingHands } from './types';
 import { renderMerge } from './merge';
 import { HOOK_OPEN, hookWords, stripHookMarks, type HookWord } from './hook-mark';
 import { drawCaptionLayer, highlightWords } from './caption-draw';
 import { canvasCaptionMeasure, captionFont } from './caption-fit';
-import { loadArtefactFonts } from './fonts';
+import { ensureHandwritingFace, LATIN_SAMPLE, loadArtefactFonts } from './fonts';
 import { peekPortraitCache } from './portraits';
 import { badgeColorFor, faviconUrlFor, initialsFor, MIN_FAVICON_PX, rowPortraitSource } from './avatar-fallback';
 import { fitTypedNote, revealLines, TYPED_MIN_SCALE, typedLength, typedNoteBody, type TypedFit } from './typed-fit';
@@ -350,7 +350,7 @@ function paintDeskSurface(
   }
 }
 
-function pickFrom<T>(items: readonly T[], seed: number) {
+export function pickFrom<T>(items: readonly T[], seed: number) {
   return items[Math.abs(seed) % items.length] as T;
 }
 
@@ -892,15 +892,7 @@ function drawWritingPen(context: CanvasRenderingContext2D, x: number, y: number,
 }
 
 /** Handwriting fonts differ a lot in letter height; this evens them out so a size looks the same in every style. */
-const handwritingScales: Record<string, number> = {
-  Caveat: 1.08,
-  'Nanum Pen Script': 1.22,
-  Handlee: 0.96,
-  'Cedarville Cursive': 1.02,
-  'Patrick Hand': 1,
-  'Shadows Into Light': 1.02,
-  'Gloria Hallelujah': 0.84,
-};
+const handwritingScales: Record<string, number> = Object.fromEntries(handwritingStyles.map((style) => [style.font, style.scale]));
 
 export function handwritingScale(fontFamily: string) {
   return handwritingScales[fontFamily] ?? 1;
@@ -1524,14 +1516,16 @@ async function ensureArtefactTypefaces(config: StudioConfig) {
       document.fonts.load(`500 ${size}px "Space Grotesk"`),
       document.fonts.load(`700 ${size}px "Space Grotesk"`),
       document.fonts.load(`500 ${size}px "Manrope"`),
-      document.fonts.load(`${size}px "Homemade Apple"`),
       document.fonts.load(`${size}px Caveat`),
       document.fonts.load(captionFont(size)),
       document.fonts.ready,
     ]);
     artefactTypefacesReady = true;
   }
-  await document.fonts.load(`${size}px "${family}"`);
+  if (config.mode !== 'avatar' && config.fontFamily) await ensureHandwritingFace(config.fontFamily, size);
+  // Mixed rows draw in any of the original seven: make sure each has its Latin glyphs.
+  if (config.shuffleHandwriting) await Promise.all(legacyHandwritingFonts.map((font) => document.fonts.load(`${size}px "${font}"`, LATIN_SAMPLE)));
+  await document.fonts.load(`${size}px "${family}"`, LATIN_SAMPLE);
 }
 
 /**
@@ -1552,7 +1546,7 @@ export async function measureNoteFit(config: StudioConfig, contact: Contact) {
   const seed = (config.seed ?? 7) + contact.row;
   const finish = config.shuffleFinish ? pickFrom(['desk', 'scanned', 'soft-shadow', 'clean'] as NoteFinish[], seed) : (config.finish ?? 'desk');
   const zone = config.noteZone ?? cardZone(finish, config.cardFill);
-  const fontFamily = config.shuffleHandwriting ? pickFrom(handwritingFonts, seed + 11) : (config.fontFamily || 'Homemade Apple');
+  const fontFamily = config.shuffleHandwriting ? pickFrom(legacyHandwritingFonts, seed + 11) : (config.fontFamily || 'Homemade Apple');
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
   if (!context) return null;
@@ -1725,7 +1719,7 @@ export async function renderStudioCanvas(
     const fontFamily = config.mode === 'avatar'
       ? (config.fontFamily || 'Space Grotesk')
       : config.shuffleHandwriting
-        ? pickFrom(handwritingFonts, seed + 11)
+        ? pickFrom(legacyHandwritingFonts, seed + 11)
         : (config.fontFamily || 'Homemade Apple');
     const handSpec = writingHandSpec(config);
     const writingHand = config.mode === 'handgif' ? await loadImage(publicAssetUrl(handSpec.src)) : null;

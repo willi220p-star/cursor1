@@ -124,6 +124,7 @@ import { pushHistory } from '@/studio/campaign-status';
 import { planRegeneration, type RegenerationPlan } from '@/studio/row-hash';
 import { HookControls } from '@/components/studio/hook-controls';
 import { AudiencePicker } from '@/components/studio/audience-picker';
+import { HandwritingPicker, MixFontsToggle } from '@/components/studio/handwriting-picker';
 import { AvatarRowChecks } from '@/components/studio/avatar-row-checks';
 import { GuideButton } from '@/components/studio/guide-sheet';
 import { wordTargetFor } from '@/studio/audience';
@@ -152,7 +153,6 @@ import {
   guessAvatarColumn,
   guessColumn,
   handwritingKinds,
-  noteWritingStyles,
   memeMotions,
   messageColumnAliases,
   modeHref,
@@ -2647,26 +2647,7 @@ export function StudioGenerator({
         <>
           <AudiencePicker config={config} setConfig={setConfig} />
           <Section title="Handwriting">
-            <FieldRow id="handwriting-style" label="Writing style" hint="Handwriting 1 to 7. The note uses the one you pick.">
-              <div id="handwriting-style" className="writing-style-grid" role="listbox" aria-label="Writing style">
-                {noteWritingStyles.map((style) => {
-                  const active = config.fontFamily === style.font && !config.customFontDataUrl;
-                  return (
-                    <button
-                      type="button"
-                      key={style.id}
-                      role="option"
-                      aria-selected={active}
-                      className={`writing-style ${active ? 'is-active' : ''}`}
-                      onClick={() => setConfig((current) => ({ ...current, fontFamily: style.font, customFontDataUrl: undefined }))}
-                    >
-                      <span className="writing-style-sample" style={{ fontFamily: `"${style.font}", cursive`, fontSize: style.size }}>{style.sample}</span>
-                      <span className="writing-style-name">{style.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </FieldRow>
+            <HandwritingPicker config={config} setConfig={setConfig} contact={contact} />
           </Section>
           <Section title="Paper and ink">
             {finishSelect}
@@ -2859,7 +2840,7 @@ export function StudioGenerator({
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.ruledLines} onCheckedChange={(value) => updateConfig('ruledLines', value === true)} /> Ruled lines</label>
               {handwritingMode && <label className="toggle-row" title="Short notes grow to fill the card. Long notes always shrink to fit."><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.autoFit !== false} onCheckedChange={(value) => updateConfig('autoFit', value === true)} /> Auto-size writing</label>}
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.showMargin} onCheckedChange={(value) => updateConfig('showMargin', value === true)} /> Margin</label>
-              <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleHandwriting} onCheckedChange={(value) => updateConfig('shuffleHandwriting', value === true)} /> Shuffle handwriting</label>
+              <MixFontsToggle checked={config.shuffleHandwriting} onChange={(value) => updateConfig('shuffleHandwriting', value)} />
               <label className="toggle-row"><Checkbox className="h-5 w-5 rounded-[4px] border-input" checked={config.shuffleFinish} onCheckedChange={(value) => updateConfig('shuffleFinish', value === true)} /> Shuffle picture styles</label>
             </div>
             <button type="button" className="btn btn-quiet w-full" onClick={() => updateConfig('seed', Math.floor(Math.random() * 9999))}>

@@ -1,0 +1,168 @@
+{
+  "sample": "Hi Maya, quick note about Top End Solar. 0123456789",
+  "size": 200,
+  "fonts": {
+    "Patrick Hand": {
+      "xHeight": 0.47,
+      "stroke": 0.085,
+      "ascent": 0.715,
+      "descent": 0.305
+    },
+    "Handlee": {
+      "xHeight": 0.5,
+      "stroke": 0.065,
+      "ascent": 0.805,
+      "descent": 0.25
+    },
+    "Dekko": {
+      "xHeight": 0.45,
+      "stroke": 0.085,
+      "ascent": 0.68,
+      "descent": 0.23
+    },
+    "Annie Use Your Telescope": {
+      "xHeight": 0.47,
+      "stroke": 0.05,
+      "ascent": 0.76,
+      "descent": 0.405
+    },
+    "Shadows Into Light Two": {
+      "xHeight": 0.6,
+      "stroke": 0.06,
+      "ascent": 0.86,
+      "descent": 0.325
+    },
+    "Yomogi": {
+      "xHeight": 0.49,
+      "stroke": 0.05,
+      "ascent": 0.73,
+      "descent": 0.13
+    },
+    "Caveat": {
+      "xHeight": 0.36,
+      "stroke": 0.065,
+      "ascent": 0.7,
+      "descent": 0.22
+    },
+    "Shadows Into Light": {
+      "xHeight": 0.515,
+      "stroke": 0.055,
+      "ascent": 0.875,
+      "descent": 0.37
+    },
+    "Indie Flower": {
+      "xHeight": 0.425,
+      "stroke": 0.06,
+      "ascent": 0.725,
+      "descent": 0.485
+    },
+    "The Girl Next Door": {
+      "xHeight": 0.495,
+      "stroke": 0.05,
+      "ascent": 0.815,
+      "descent": 0.65
+    },
+    "Waiting for the Sunrise": {
+      "xHeight": 0.5,
+      "stroke": 0.04,
+      "ascent": 0.735,
+      "descent": 0.395
+    },
+    "Hi Melody": {
+      "xHeight": 0.325,
+      "stroke": 0.06,
+      "ascent": 0.51,
+      "descent": 0.2
+    },
+    "Square Peg": {
+      "xHeight": 0.26,
+      "stroke": 0.04,
+      "ascent": 0.68,
+      "descent": 0.405
+    },
+    "Cedarville Cursive": {
+      "xHeight": 0.41,
+      "stroke": 0.06,
+      "ascent": 0.935,
+      "descent": 0.385
+    },
+    "Homemade Apple": {
+      "xHeight": 0.475,
+      "stroke": 0.085,
+      "ascent": 1.015,
+      "descent": 0.695
+    },
+    "La Belle Aurore": {
+      "xHeight": 0.395,
+      "stroke": 0.07,
+      "ascent": 0.745,
+      "descent": 0.68
+    },
+    "Nothing You Could Do": {
+      "xHeight": 0.435,
+      "stroke": 0.06,
+      "ascent": 0.785,
+      "descent": 0.39
+    },
+    "Nanum Pen Script": {
+      "xHeight": 0.485,
+      "stroke": 0.07,
+      "ascent": 0.695,
+      "descent": 0.14
+    },
+    "Reenie Beanie": {
+      "xHeight": 0.38,
+      "stroke": 0.05,
+      "ascent": 0.72,
+      "descent": 0.205
+    },
+    "Nanum Brush Script": {
+      "xHeight": 0.32,
+      "stroke": 0.06,
+      "ascent": 0.56,
+      "descent": 0.315
+    },
+    "Sue Ellen Francisco": {
+      "xHeight": 0.375,
+      "stroke": 0.06,
+      "ascent": 1.005,
+      "descent": 0.55
+    },
+    "Swanky and Moo Moo": {
+      "xHeight": 0.335,
+      "stroke": 0.06,
+      "ascent": 0.6,
+      "descent": 0.49
+    },
+    "Gloria Hallelujah": {
+      "xHeight": 0.57,
+      "stroke": 0.1,
+      "ascent": 0.855,
+      "descent": 0.39
+    },
+    "Mansalva": {
+      "xHeight": 0.395,
+      "stroke": 0.11,
+      "ascent": 0.735,
+      "descent": 0.285
+    },
+    "Gamja Flower": {
+      "xHeight": 0.365,
+      "stroke": 0.075,
+      "ascent": 0.57,
+      "descent": 0.195
+    },
+    "Schoolbell": {
+      "xHeight": 0.435,
+      "stroke": 0.08,
+      "ascent": 0.775,
+      "descent": 0.315
+    },
+    "Gaegu": {
+      "xHeight": 0.385,
+      "stroke": 0.07,
+      "ascent": 0.62,
+      "descent": 0.225
+    }
+  }
+}

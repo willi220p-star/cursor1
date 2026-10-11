@@ -31,7 +31,7 @@ export type WhatsNewItem = {
 };
 
 /** Bump when the What's new list changes; the "?" button shows a dot until the guide is opened once. */
-export const GUIDE_RELEASE = '2026-10-10';
+export const GUIDE_RELEASE = '2026-10-11';
 export const GUIDE_SEEN_KEY = 'gtm-studio-guide-seen';
 
 const listStudios: GuideKey[] = ['handwritten', 'handgif', 'avatar', 'memes', 'gif'];
@@ -59,7 +59,7 @@ export const guideContent: Record<GuideKey, GuideEntry> = {
       },
       {
         title: 'Pick the look',
-        body: 'In Look, Made for sets the canvas, framing and writing size in one click: Desktop email, Phone-first or LinkedIn DM. Choose a Writing style and a Paper and ink finish such as Phone photo. Auto-size writing (under More settings) grows short notes to fill the card and shrinks long ones to fit.',
+        body: 'In Look, Made for sets the canvas, framing and writing size in one click: Desktop email, Phone-first or LinkedIn DM. Choose a Writing style: 27 handwriting fonts in five groups, each with a line on when to use it, a sample in the selected row’s own words and a phone readability tag. Then pick a Paper and ink finish such as Phone photo. Auto-size writing (under More settings) grows short notes to fill the card and shrinks long ones to fit.',
         labels: ['Look', 'Made for', 'Desktop email', 'Phone-first', 'LinkedIn DM', 'Writing style', 'Paper and ink finish', 'Phone photo', 'Auto-size writing', 'More settings'],
       },
       {
@@ -81,8 +81,8 @@ export const guideContent: Record<GuideKey, GuideEntry> = {
       },
       {
         title: 'Phone-first is the safe default',
-        body: 'Most replies come from a phone. Phone-first keeps the writing big and the note around 25 words.',
-        labels: ['Phone-first'],
+        body: 'Most replies come from a phone. Phone-first keeps the writing big and the note around 25 words. In Writing style, tick Good on phones to see only the fonts that stay clear at that size, and leave Mix fonts across rows off: one hand looks more real.',
+        labels: ['Phone-first', 'Good on phones', 'Mix fonts across rows'],
       },
       {
         title: 'Set the alt text',
@@ -145,6 +145,11 @@ export const guideContent: Record<GuideKey, GuideEntry> = {
         title: 'Stay under 1 MB',
         body: 'Large images hurt deliverability and load slowly on mobile data. Keep under 1 MB lowers the GIF quality until each file fits.',
         labels: ['Keep under 1 MB'],
+      },
+      {
+        title: 'Pick one clear hand',
+        body: 'The GIF shows the writing for a few seconds. In Writing style, pick a font tagged Good on phones, and leave Mix fonts across rows off so every GIF looks like the same person wrote it.',
+        labels: ['Writing style', 'Good on phones', 'Mix fonts across rows'],
       },
       {
         title: 'Save it for a follow-up',
@@ -397,6 +402,7 @@ export const whatsNew: WhatsNewItem[] = [
   { text: 'Inbox preview shows each row at real inbox size', keys: listStudios },
   { text: 'Personal hook marked with an underline or a circle', keys: ['handwritten', 'handgif'] },
   { text: 'Phone photo finish and a plain card page', keys: ['handwritten'] },
+  { text: '27 handwriting fonts in five groups, with a phone readability tag on each', keys: ['handwritten', 'handgif'] },
   { text: 'Alt text column for every image', keys: ['handwritten', 'avatar', 'memes', 'gif'] },
   { text: 'GIFs open on the finished frame and come with a still JPG', keys: ['handgif', 'avatar', 'gif'] },
   { text: 'Keep under 1 MB for GIFs', keys: ['handgif', 'avatar', 'gif'] },
