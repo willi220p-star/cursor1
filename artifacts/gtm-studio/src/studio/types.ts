@@ -1,3 +1,5 @@
+import { handwritingFonts } from './handwriting-fonts';
+
 export type StudioMode = 'handwritten' | 'memes' | 'gif' | 'avatar' | 'handgif';
 
 export const studioModes: { id: StudioMode; label: string; hint: string }[] = [
@@ -426,30 +428,15 @@ export function migrateDeskSurface(value: string | undefined): DeskSurface {
   return 'pine';
 }
 
-/** Notes writing styles. Each face is an open pen matched to the sample notes. */
-export const noteWritingStyles = [
-  { id: 'handwriting-1', label: 'Handwriting 1', font: 'Caveat', sample: 'Hi {name|there},', size: 24 },
-  { id: 'handwriting-2', label: 'Handwriting 2', font: 'Nanum Pen Script', sample: 'Hi {name|there},', size: 26 },
-  { id: 'handwriting-3', label: 'Handwriting 3', font: 'Handlee', sample: 'Hi {name|there},', size: 22 },
-  { id: 'handwriting-4', label: 'Handwriting 4', font: 'Cedarville Cursive', sample: 'Hi {name|there},', size: 24 },
-  { id: 'handwriting-5', label: 'Handwriting 5', font: 'Patrick Hand', sample: 'Hi {name|there},', size: 22 },
-  { id: 'handwriting-6', label: 'Handwriting 6', font: 'Shadows Into Light', sample: 'Hi {name|there},', size: 22 },
-  { id: 'handwriting-7', label: 'Handwriting 7', font: 'Gloria Hallelujah', sample: 'Hi {name|there},', size: 18 },
-] as const;
+export { handwritingFonts, handwritingStyles, handwritingGroups, legacyHandwritingFonts } from './handwriting-fonts';
 
-export type NoteWritingStyle = (typeof noteWritingStyles)[number];
-
-export const handwritingFonts = noteWritingStyles.map((style) => style.font);
-
+/** Fonts Notes no longer offers. A saved look can still hold one, so isHandwritingFamily keeps recognising them. */
 const retiredHandwritingFonts = [
-  'Homemade Apple',
   'Covered By Your Grace',
-  'Reenie Beanie',
   'Sacramento',
   'Dancing Script',
   'Kalam',
   'Gochi Hand',
-  'Indie Flower',
 ] as const;
 
 export function isHandwritingFamily(font: string) {

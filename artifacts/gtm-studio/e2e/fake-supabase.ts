@@ -16,6 +16,8 @@ export type FakeOptions = {
   assets?: Record<string, unknown>[];
   /** Objects in the asset bucket, for storage list (sizes) and remove. */
   storageObjects?: Array<{ path: string; size: number }>;
+  /** Let Google Fonts through (default: blocked). For checks that must see a font really draw. */
+  allowFonts?: boolean;
 };
 
 /** `table` is the REST table, or `storage:list` / `storage:remove` for bucket calls. */
@@ -106,7 +108,7 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
     return route.fulfill({ json: {} });
   });
   // Web fonts are not needed for these checks and keep runs steady offline.
-  await context.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
+  if (!options.allowFonts) await context.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.abort());
   const now = Math.floor(Date.now() / 1000);
   const session = { access_token: 'e2e', token_type: 'bearer', expires_in: 86400, expires_at: now + 86400, refresh_token: 'e2e', user };
   await context.addInitScript(([signed, sessionJson, contactsKey, contactsJson]) => {
