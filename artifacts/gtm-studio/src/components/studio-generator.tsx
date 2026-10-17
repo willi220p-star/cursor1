@@ -392,9 +392,12 @@ type ZoneKind = 'text' | 'website' | 'avatar' | 'note';
 export function StudioGenerator({
   mode,
   userId,
+  canEditTemplates = true,
 }: {
   mode: StudioMode;
   userId?: string;
+  /** False for Client Managers: they use saved looks but cannot save, copy or delete them. */
+  canEditTemplates?: boolean;
 }) {
   const scope = userId ?? 'anonymous';
   const [, navigate] = useLocation();
@@ -1269,7 +1272,7 @@ export function StudioGenerator({
   };
 
   const saveTemplate = async () => {
-    if (savingTemplate) return;
+    if (savingTemplate || !canEditTemplates) return;
     setSavingTemplate(true);
     try {
       const saved = await saveTemplateConfig({ ...config, mode }, userId);
@@ -1300,7 +1303,7 @@ export function StudioGenerator({
   };
 
   const deleteSavedTemplate = async (template: SavedTemplate) => {
-    if (deletingTemplateId) return;
+    if (deletingTemplateId || !canEditTemplates) return;
     if (!window.confirm(`Delete “${template.name}”? It will be removed from this studio and from Supabase.`)) return;
     setDeletingTemplateId(template.id);
     try {
@@ -1317,6 +1320,7 @@ export function StudioGenerator({
   };
 
   const duplicateTemplate = async (template: SavedTemplate) => {
+    if (!canEditTemplates) return;
     try {
       const saved = await copyTemplateConfig(template, userId);
       setSavedTemplates(await listTemplateConfigs(userId));
@@ -2592,9 +2596,11 @@ export function StudioGenerator({
         {templatesForMode.slice(0, 8).map((item) => (
           <button type="button" key={item.id} className="chip" onClick={() => loadTemplate(item)}>{item.name}</button>
         ))}
-        <button type="button" className="chip is-dashed" onClick={saveTemplate} data-loading={savingTemplate || undefined} aria-busy={savingTemplate || undefined}>
-          <Sparkles size={14} aria-hidden /> Save this look
-        </button>
+        {canEditTemplates && (
+          <button type="button" className="chip is-dashed" onClick={saveTemplate} data-loading={savingTemplate || undefined} aria-busy={savingTemplate || undefined}>
+            <Sparkles size={14} aria-hidden /> Save this look
+          </button>
+        )}
       </div>
     </Section>
   );
@@ -2981,18 +2987,22 @@ export function StudioGenerator({
               </span>
               <ArrowRight size={16} aria-hidden />
             </button>
-            <button type="button" className="btn btn-quiet btn-icon" aria-label={`Copy ${item.name}`} onClick={() => void duplicateTemplate(item)}>
-              <Copy size={16} aria-hidden />
-            </button>
-            <button
-              type="button"
-              className="btn btn-danger btn-icon"
-              aria-label={`Delete ${item.name}`}
-              disabled={deletingTemplateId === item.id}
-              onClick={() => void deleteSavedTemplate(item)}
-            >
-              <Trash2 size={16} aria-hidden />
-            </button>
+            {canEditTemplates && (
+              <>
+                <button type="button" className="btn btn-quiet btn-icon" aria-label={`Copy ${item.name}`} onClick={() => void duplicateTemplate(item)}>
+                  <Copy size={16} aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-icon"
+                  aria-label={`Delete ${item.name}`}
+                  disabled={deletingTemplateId === item.id}
+                  onClick={() => void deleteSavedTemplate(item)}
+                >
+                  <Trash2 size={16} aria-hidden />
+                </button>
+              </>
+            )}
           </div>
         )) : (
           <p className="helper">Save this configuration with “Save template” to keep a reusable look for {modeLabel(mode)} only.</p>
@@ -3063,8 +3073,8 @@ export function StudioGenerator({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-52 border-border bg-popover">
               <DropdownMenuItem className="min-h-11" onSelect={() => openList('source')}><FolderOpen aria-hidden /> Import a new list</DropdownMenuItem>
-              <DropdownMenuItem className="min-h-11" onSelect={() => void saveTemplate()}><Sparkles aria-hidden /> Save this look</DropdownMenuItem>
-              <DropdownMenuItem
+              {canEditTemplates && <DropdownMenuItem className="min-h-11" onSelect={() => void saveTemplate()}><Sparkles aria-hidden /> Save this look</DropdownMenuItem>}
+              {canEditTemplates && <DropdownMenuItem
                 className="min-h-11"
                 onSelect={() => void duplicateTemplate({
                   id: config.templateId || crypto.randomUUID(),
@@ -3076,7 +3086,7 @@ export function StudioGenerator({
                 })}
               >
                 <Copy aria-hidden /> Copy this look
-              </DropdownMenuItem>
+              </DropdownMenuItem>}
               <DropdownMenuItem className="min-h-11" onSelect={() => setShortcutsOpen(true)}><Keyboard aria-hidden /> Keyboard shortcuts</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

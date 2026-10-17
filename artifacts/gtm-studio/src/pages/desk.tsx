@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'wouter';
 import { CircleUser, Film, Image, Pencil } from 'lucide-react';
+import { toast } from 'sonner';
 import { Library } from '@/components/studio/library';
 import { GuideButton } from '@/components/studio/guide-sheet';
 import { PanelBoundary } from '@/components/error-boundary';
@@ -12,6 +13,8 @@ import { reportError } from '@/lib/report';
 import { renderMerge } from '@/studio/merge';
 import { openCampaignInStudio, openTemplateInStudio, studioInfo, type StudioKey } from '@/studio/studios';
 import type { SavedCampaign, SavedTemplate } from '@/studio/types';
+import { clientSpaceId, isStaff } from '@/studio/access';
+import { canUseStudios, spaceName, useAccess } from '@/studio/access-context';
 
 const SAMPLE_NOTE = 'Hi there,\n\nEvery note in here is written for one person. That is why they get read.\n\nDGK';
 
@@ -46,6 +49,14 @@ function StudioTile({ studio, className = '' }: { studio: StudioKey; className?:
 
 export function DeskPage({ userId, email }: { userId?: string; email?: string }) {
   const [, navigate] = useLocation();
+  const access = useAccess();
+  const studiosOpen = canUseStudios(access);
+  const staff = isStaff(access.orgRole);
+  const { currentSpaceId } = access;
+  // Clients see their space's name; staff see the picked space (nothing for All spaces).
+  const deskSpaceName = staff
+    ? (currentSpaceId ? spaceName(access.spaces, currentSpaceId) : '')
+    : access.spaces.length ? spaceName(access.spaces, clientSpaceId(access.memberships, access.spaces)) : '';
   const scope = userId ?? 'anonymous';
   const [campaigns, setCampaigns] = useState<SavedCampaign[] | null>(null);
   const [libraryRevision, setLibraryRevision] = useState(0);
@@ -72,11 +83,18 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
       unsubscribe();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [userId, currentSpaceId]);
 
-  const openCampaign = (campaign: SavedCampaign) => openCampaignInStudio(scope, campaign, navigate);
+  const openCampaign = (campaign: SavedCampaign) => {
+    if (!studiosOpen) {
+      toast.info('View only', { description: 'Download or review the files in the library. Ask DGK if something needs changing.' });
+      return;
+    }
+    openCampaignInStudio(scope, campaign, navigate);
+  };
   const openTemplate = (template: SavedTemplate) => openTemplateInStudio(scope, template, navigate);
   const loadSample = () => {
+    if (!studiosOpen) return;
     requestSampleList(scope);
     navigate('/handwritten');
   };
@@ -103,16 +121,19 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
     <div className="desk animate-rise">
       <section className="desk-hero" aria-labelledby="desk-heading">
         <div className="desk-hero-copy">
+          {deskSpaceName && <p className="tile-kicker" data-testid="desk-space">{deskSpaceName}</p>}
           <h1 id="desk-heading" className="display">{greeting}, {firstName}.</h1>
           <p className="desk-hero-lead">
             {campaigns === null
               ? 'Getting your desk ready.'
-              : latest
+              : !studiosOpen
+                ? 'Your campaigns and files are below. Open one to download it or leave a review.'
+                : latest
                 ? `${latest.name} is where you left it. Pick up there, or start something new.`
                 : 'Pick a studio, or load the sample list to see how a campaign comes together.'}
           </p>
           <div className="desk-hero-actions">
-            {latest ? (
+            {!studiosOpen ? null : latest ? (
               <>
                 <button type="button" className="btn btn-primary" onClick={() => openCampaign(latest)}>Continue {latest.name}</button>
                 <Link href="/handwritten" className="btn btn-outline">New Notes campaign</Link>
@@ -148,6 +169,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
           type="button"
           className="desk-scene"
           aria-label={sceneLabel}
+          disabled={!studiosOpen}
           style={{ backgroundImage: `url(${publicAssetUrl('/desk/walnut.png')})` }}
           onClick={() => (latest ? openCampaign(latest) : loadSample())}
         >
@@ -156,6 +178,7 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
         </button>
       </section>
 
+      {studiosOpen && (
       <section aria-labelledby="studios-heading" className="flex flex-col gap-5">
         <h2 id="studios-heading" className="section-title">Studios</h2>
         <div className="studio-bento">
@@ -184,9 +207,11 @@ export function DeskPage({ userId, email }: { userId?: string; email?: string })
           </Link>
         </div>
       </section>
+      )}
 
       <PanelBoundary label="The library">
       <Library
+        key={currentSpaceId ?? 'all-spaces'}
         userId={userId}
         revision={libraryRevision}
         onChanged={refreshDesk}

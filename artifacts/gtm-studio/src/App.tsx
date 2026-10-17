@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { User } from '@supabase/supabase-js';
 import {
@@ -6,7 +6,9 @@ import {
   Route,
   Router as WouterRouter,
   Switch,
+  useLocation,
 } from 'wouter';
+import { toast } from 'sonner';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -16,11 +18,14 @@ import { DeskPage } from '@/pages/desk';
 import { Shell } from '@/app/shell';
 import { useTheme } from '@/lib/theme';
 import { getCurrentSession, onAuthChange } from '@/studio/auth';
+import { AccessProvider, canSeeActivity, canUseStudios, useAccess } from '@/studio/access-context';
 
 // The studios, carousel and settings load on first visit so the Desk and sign-in paint fast.
 const StudioGenerator = lazy(() => import('@/components/studio-generator').then((m) => ({ default: m.StudioGenerator })));
 const CarouselGeneratorPage = lazy(() => import('@/carousel/page').then((m) => ({ default: m.CarouselGeneratorPage })));
 const SettingsPage = lazy(() => import('@/pages/settings').then((m) => ({ default: m.SettingsPage })));
+const MembersPage = lazy(() => import('@/pages/members').then((m) => ({ default: m.MembersPage })));
+const ActivityPage = lazy(() => import('@/pages/activity').then((m) => ({ default: m.ActivityPage })));
 
 const queryClient = new QueryClient();
 
@@ -44,6 +49,58 @@ function PageFallback() {
   );
 }
 
+/** Sends the user back to the Desk with a toast when their role does not allow this page. */
+function NotAllowed({ message }: { message: string }) {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    toast.error('Not available for your role', { description: message });
+    navigate('/', { replace: true });
+  }, [message, navigate]);
+  return null;
+}
+
+function Guard({ allow, message, children }: { allow: boolean; message: string; children: ReactNode }) {
+  return allow ? <>{children}</> : <NotAllowed message={message} />;
+}
+
+const STUDIO_DENIED = 'Your role can view, download and review files, but not make new ones.';
+
+function SignedInRoutes({ user }: { user: User }) {
+  const access = useAccess();
+  const userId = user.id;
+  const email = user.email ?? undefined;
+  const studiosOpen = canUseStudios(access);
+  const canEditTemplates = access.can('template.edit', null);
+  const studio = (mode: 'handwritten' | 'avatar' | 'memes' | 'gif' | 'handgif') => (
+    <Guard allow={studiosOpen} message={STUDIO_DENIED}>
+      <StudioGenerator key={mode} mode={mode} userId={userId} canEditTemplates={canEditTemplates} />
+    </Guard>
+  );
+  return (
+    <Shell user={user}>
+      <Suspense fallback={<PageFallback />}>
+        <Switch>
+          <Route path="/"><DeskPage userId={userId} email={email} /></Route>
+          <Route path="/handwritten">{studio('handwritten')}</Route>
+          <Route path="/avatar">{studio('avatar')}</Route>
+          <Route path="/memes">{studio('memes')}</Route>
+          <Route path="/gif">{studio('gif')}</Route>
+          <Route path="/handgif">{studio('handgif')}</Route>
+          <Route path="/carousel"><Guard allow={studiosOpen} message={STUDIO_DENIED}><CarouselGeneratorPage userId={userId} /></Guard></Route>
+          <Route path="/settings"><SettingsPage userId={userId} email={email} /></Route>
+          <Route path="/members">
+            <Guard allow={access.can('members.manage', null)} message="Only DGK staff manage members and spaces."><MembersPage userId={userId} /></Guard>
+          </Route>
+          <Route path="/activity">
+            <Guard allow={canSeeActivity(access)} message="Activity is for DGK staff and Client Managers."><ActivityPage /></Guard>
+          </Route>
+          <Route><NotFound /></Route>
+        </Switch>
+      </Suspense>
+    </Shell>
+  );
+}
+
 function Router() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [bootError, setBootError] = useState<string | null>(null);
@@ -59,27 +116,13 @@ function Router() {
   if (user === undefined) return <BootScreen />;
   if (!user) return <LoginPage bootError={bootError} />;
 
-  const userId = user.id;
-  const email = user.email ?? undefined;
   return (
     <Switch>
       <Route path="/login"><Redirect to="/" replace /></Route>
       <Route>
-        <Shell user={user}>
-          <Suspense fallback={<PageFallback />}>
-            <Switch>
-              <Route path="/"><DeskPage userId={userId} email={email} /></Route>
-              <Route path="/handwritten"><StudioGenerator key="handwritten" mode="handwritten" userId={userId} /></Route>
-              <Route path="/avatar"><StudioGenerator key="avatar" mode="avatar" userId={userId} /></Route>
-              <Route path="/memes"><StudioGenerator key="memes" mode="memes" userId={userId} /></Route>
-              <Route path="/gif"><StudioGenerator key="gif" mode="gif" userId={userId} /></Route>
-              <Route path="/handgif"><StudioGenerator key="handgif" mode="handgif" userId={userId} /></Route>
-              <Route path="/carousel"><CarouselGeneratorPage userId={userId} /></Route>
-              <Route path="/settings"><SettingsPage userId={userId} email={email} /></Route>
-              <Route><NotFound /></Route>
-            </Switch>
-          </Suspense>
-        </Shell>
+        <AccessProvider user={user}>
+          <SignedInRoutes user={user} />
+        </AccessProvider>
       </Route>
     </Switch>
   );
@@ -93,6 +136,7 @@ export default function App() {
         <TooltipProvider delayDuration={300}>
           <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
             <Router />
+            {/* SLOT: results host */}
           </WouterRouter>
           <Toaster
             theme={resolved}

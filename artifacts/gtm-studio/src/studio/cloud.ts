@@ -4,6 +4,18 @@ import { campaignHistory, cleanClient, pushHistory } from './campaign-status';
 import { attachPortraitCaches, stripPortraitDataUrls } from './portraits';
 import { outputColumnNames } from './writeback';
 import type { GeneratedAsset, SavedCampaign, SavedTemplate, StudioConfig, StudioMode } from './types';
+import type { AppError } from './contracts';
+import { conflictError, toAppError } from '@/lib/app-error';
+import {
+  getKnownSpaces,
+  getQuerySpace,
+  getSaveSpace,
+  isCarouselPath,
+  isManagedPath,
+  spaceFields,
+  spaceFromPath as spaceFromStoragePath,
+  storagePathFor,
+} from './space-scope';
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
@@ -38,29 +50,109 @@ export function peekLocalCampaign(mode: StudioMode, userId?: string): SavedCampa
   return local.find((item) => item.mode === mode);
 }
 
+/** Campaign id → space id, learned from lists and saves, so uploads land in the campaign's own space. */
+const campaignSpaces = new Map<string, string>();
+
+/** The space a campaign lives in (cached, else one lookup), falling back to the save space for new campaigns. */
+async function resolveCampaignSpace(campaignId?: string | null): Promise<string | null> {
+  if (campaignId) {
+    const known = campaignSpaces.get(campaignId);
+    if (known) return known;
+    if (supabase) {
+      const { data, error } = await supabase.from('outbound_campaigns').select('space_id').eq('id', campaignId).maybeSingle();
+      const found = !error && data && typeof data.space_id === 'string' ? data.space_id : null;
+      if (found) {
+        campaignSpaces.set(campaignId, found);
+        return found;
+      }
+    }
+  }
+  return getSaveSpace();
+}
+
+/** Single-item result: `syncError` for existing callers, `error` (an AppError) for new ones. */
+export type ItemResult = { syncError?: string; error?: AppError };
+
+function failed(error: unknown): ItemResult {
+  const appError = toAppError(error);
+  return { syncError: appError.message, error: appError };
+}
+
+/** Best effort "who changed it and when" for a conflict message. */
+async function describeConflict(table: string, id: string): Promise<AppError> {
+  if (!supabase) return conflictError();
+  try {
+    const row = await supabase.from(table).select('updated_at').eq('id', id).maybeSingle();
+    const at = row.data && typeof row.data.updated_at === 'string' ? row.data.updated_at : undefined;
+    const last = await supabase.from('activity_log').select('actor').eq('entity_id', id).order('at', { ascending: false }).limit(1);
+    const actor = (last.data as Array<{ actor?: string | null }> | null)?.[0]?.actor;
+    let editor: string | undefined;
+    if (actor) {
+      const profile = await supabase.from('profiles').select('display_name,email').eq('user_id', actor).maybeSingle();
+      editor = (profile.data?.display_name as string | undefined) || (profile.data?.email as string | undefined) || undefined;
+    }
+    return conflictError(editor, at);
+  } catch {
+    return conflictError();
+  }
+}
+
+/**
+ * Updates one row by id. With a known `version` it only matches that version, and zero rows
+ * updated becomes a conflict AppError (someone else saved in between).
+ */
+async function updateOne(table: string, id: string, patch: Record<string, unknown>, version?: number): Promise<ItemResult> {
+  if (!supabase) return {};
+  let query = supabase.from(table).update(patch).eq('id', id);
+  if (typeof version === 'number') query = query.eq('version', version);
+  const { data, error } = await query.select('id');
+  if (error) return failed(error);
+  if (typeof version === 'number' && !(data ?? []).length) {
+    const conflict = await describeConflict(table, id);
+    return { syncError: conflict.message, error: conflict };
+  }
+  return {};
+}
+
 export async function listCampaigns(userId?: string): Promise<SavedCampaign[]> {
   const local = readJson<SavedCampaign[]>(userKey(LOCAL_CAMPAIGNS, userId), []);
   if (!supabase || !userId) return local;
-  const { data, error } = await supabase
+  // RLS decides which rows are visible; the current space (if one is picked) narrows it further.
+  let query = supabase
     .from('outbound_campaigns')
-    .select('id,name,mode,config,source_columns,source_data,updated_at,folder_id')
-    .order('updated_at', { ascending: false });
+    .select('id,name,mode,config,source_columns,source_data,updated_at,folder_id,space_id,version')
+    .is('deleted_at', null);
+  const space = getQuerySpace();
+  if (space) query = query.eq('space_id', space);
+  const { data, error } = await query.order('updated_at', { ascending: false });
   if (error) throw error;
-  const cloud = (data ?? []).map((row) => ({
-    id: row.id,
-    name: row.name,
-    mode: row.mode,
-    config: { ...row.config, id: row.id },
-    columns: row.source_columns,
-    contacts: row.source_data ?? [],
-    updatedAt: row.updated_at,
-    cloud: true,
-    folderId: row.folder_id ?? null,
-  })) as SavedCampaign[];
+  const cloud = (data ?? []).map((row) => {
+    if (row.space_id) campaignSpaces.set(row.id, row.space_id);
+    return {
+      id: row.id,
+      name: row.name,
+      mode: row.mode,
+      config: { ...row.config, id: row.id },
+      columns: row.source_columns,
+      contacts: row.source_data ?? [],
+      updatedAt: row.updated_at,
+      cloud: true,
+      folderId: row.folder_id ?? null,
+      spaceId: row.space_id ?? undefined,
+      version: typeof row.version === 'number' ? row.version : undefined,
+    };
+  }) as SavedCampaign[];
   return [...cloud, ...local.filter((item) => !cloud.some((cloudItem) => cloudItem.id === item.id))];
 }
 
-export async function saveCampaign(config: StudioConfig, columns: string[], contacts: import('./types').Contact[], userId?: string) {
+export async function saveCampaign(
+  config: StudioConfig,
+  columns: string[],
+  contacts: import('./types').Contact[],
+  userId?: string,
+  /** `spaceId` puts a new campaign in that space instead of the save space (e.g. a copy stays beside its original). */
+  options: { spaceId?: string | null } = {},
+) {
   const storageKey = userKey(LOCAL_CAMPAIGNS, userId);
   const local = readJson<SavedCampaign[]>(storageKey, []);
   const existing = local.find((item) => item.id === config.id)
@@ -93,15 +185,22 @@ export async function saveCampaign(config: StudioConfig, columns: string[], cont
     }
   }
   if (!supabase || !userId) return record;
+  // An existing campaign keeps its space and its creator; a new one goes to the save space.
+  const existingRow = await supabase.from('outbound_campaigns').select('space_id,user_id').eq('id', record.id).maybeSingle();
+  const existingSpace = !existingRow.error && typeof existingRow.data?.space_id === 'string' ? existingRow.data.space_id : null;
+  const creator = !existingRow.error && typeof existingRow.data?.user_id === 'string' ? existingRow.data.user_id : userId;
+  const spaceId = existingSpace ?? options.spaceId ?? getSaveSpace();
+  if (spaceId) campaignSpaces.set(record.id, spaceId);
   let cloudConfig = savedConfig;
   try {
-    cloudConfig = { ...savedConfig, ...(await persistConfigImages(savedConfig, userId)), id: savedConfig.id };
+    cloudConfig = { ...savedConfig, ...(await persistConfigImages(savedConfig, userId, spaceId)), id: savedConfig.id };
   } catch (reason) {
     return { ...record, syncError: reason instanceof Error ? reason.message : 'Could not upload images to Supabase.' };
   }
   const cloudPayload = {
     id: record.id,
-    user_id: userId,
+    user_id: creator,
+    ...spaceFields(spaceId),
     name: record.name,
     mode: record.mode,
     config: { ...cloudConfig, gifFrames: undefined, gifDelays: undefined },
@@ -114,9 +213,9 @@ export async function saveCampaign(config: StudioConfig, columns: string[], cont
     const slimContacts = stripPortraitDataUrls(durableContacts);
     const retry = await supabase.from('outbound_campaigns').upsert({ ...cloudPayload, source_data: slimContacts }).select('id').single();
     if (retry.error) return { ...record, syncError: retry.error.message };
-    return { ...record, id: retry.data.id, config: { ...cloudConfig, id: retry.data.id, gifFrames: savedConfig.gifFrames, gifDelays: savedConfig.gifDelays }, cloud: true };
+    return { ...record, id: retry.data.id, config: { ...cloudConfig, id: retry.data.id, gifFrames: savedConfig.gifFrames, gifDelays: savedConfig.gifDelays }, cloud: true, spaceId: spaceId ?? undefined };
   }
-  return { ...record, id: data.id, config: { ...cloudConfig, id: data.id, gifFrames: savedConfig.gifFrames, gifDelays: savedConfig.gifDelays }, cloud: true };
+  return { ...record, id: data.id, config: { ...cloudConfig, id: data.id, gifFrames: savedConfig.gifFrames, gifDelays: savedConfig.gifDelays }, cloud: true, spaceId: spaceId ?? undefined };
 }
 
 function asSavedTemplate(item: SavedTemplate | StudioConfig, cloud = false): SavedTemplate | null {
@@ -131,6 +230,7 @@ function asSavedTemplate(item: SavedTemplate | StudioConfig, cloud = false): Sav
       updatedAt: record.updatedAt || new Date().toISOString(),
       cloud: record.cloud ?? cloud,
       folderId: record.folderId ?? null,
+      ...(typeof record.version === 'number' ? { version: record.version } : {}),
     };
   }
   const config = item as StudioConfig;
@@ -383,7 +483,8 @@ export async function listTemplateConfigs(userId?: string): Promise<SavedTemplat
   if (!supabase || !userId) return local;
   const { data, error } = await supabase
     .from('outbound_templates')
-    .select('id,name,mode,metadata,updated_at,folder_id')
+    .select('id,name,mode,metadata,updated_at,folder_id,version')
+    .is('deleted_at', null)
     .order('updated_at', { ascending: false })
     .limit(80);
   if (error) return local;
@@ -396,6 +497,7 @@ export async function listTemplateConfigs(userId?: string): Promise<SavedTemplat
       updatedAt: row.updated_at,
       cloud: true,
       folderId: row.folder_id ?? null,
+      version: typeof row.version === 'number' ? row.version : undefined,
     } as SavedTemplate, true))
     .filter((item): item is SavedTemplate => Boolean(item));
   return [...cloud, ...local.filter((item) => !cloud.some((cloudItem) => cloudItem.id === item.id))];
@@ -484,7 +586,7 @@ async function deleteStoragePaths(paths: string[]) {
 }
 
 function ownedPaths(paths: Iterable<string>, userId: string, used: Set<string>) {
-  return [...new Set(paths)].filter((path) => path.startsWith(`${userId}/`) && !used.has(path));
+  return [...new Set(paths)].filter((path) => isManagedPath(path, userId) && !used.has(path));
 }
 
 export async function removeTemplateConfig(template: SavedTemplate, userId?: string): Promise<{ syncError?: string }> {
@@ -504,7 +606,7 @@ export async function removeTemplateConfig(template: SavedTemplate, userId?: str
     const shared = await pathsUsedByOthers([...paths], { templateId: template.id });
     const stored = await deleteStoragePaths(ownedPaths(paths, userId, shared.used));
     if (stored) return { syncError: stored };
-    const deleted = await supabase.from('outbound_templates').delete().eq('id', template.id).eq('user_id', userId);
+    const deleted = await supabase.from('outbound_templates').delete().eq('id', template.id);
     if (deleted.error) return { syncError: deleted.error.message };
   }
   try {
@@ -529,7 +631,7 @@ export async function removeCampaign(campaign: SavedCampaign, userId?: string): 
     const shared = await pathsUsedByOthers([...paths], { campaignId: campaign.id });
     const stored = await deleteStoragePaths(ownedPaths(paths, userId, shared.used));
     if (stored) return { syncError: stored };
-    const deleted = await supabase.from('outbound_campaigns').delete().eq('id', campaign.id).eq('user_id', userId);
+    const deleted = await supabase.from('outbound_campaigns').delete().eq('id', campaign.id);
     if (deleted.error) return { syncError: deleted.error.message };
   }
   const storageKey = userKey(LOCAL_CAMPAIGNS, userId);
@@ -552,12 +654,15 @@ export type StoredFile = {
   label: string;
   createdAt: string;
   folderId: string | null;
+  spaceId?: string;
+  version?: number;
 };
 
 export type FileFolder = {
   id: string;
   name: string;
   createdAt: string;
+  spaceId?: string;
 };
 
 function cleanLibraryName(value: string, limit = 80) {
@@ -584,10 +689,13 @@ function storedFileLabel(metadata: { kind?: string; role?: string } | null, file
 
 export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
   if (!supabase || !userId) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from('outbound_assets')
-    .select('id,filename,public_url,storage_path,bytes,metadata,created_at,folder_id')
-    .eq('user_id', userId)
+    .select('id,filename,public_url,storage_path,bytes,metadata,created_at,folder_id,space_id,version')
+    .is('deleted_at', null);
+  const space = getQuerySpace();
+  if (space) query = query.eq('space_id', space);
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(400);
   // Callers show a load error with Retry; an empty list here would hide the failure.
@@ -602,19 +710,23 @@ export async function listStoredFiles(userId?: string): Promise<StoredFile[]> {
     label: storedFileLabel((row.metadata ?? null) as { kind?: string; role?: string } | null, row.filename),
     createdAt: row.created_at,
     folderId: row.folder_id ?? null,
+    spaceId: row.space_id ?? undefined,
+    version: typeof row.version === 'number' ? row.version : undefined,
   }));
 }
 
 export async function listFileFolders(userId?: string): Promise<FileFolder[]> {
   if (!supabase || !userId) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from('outbound_folders')
-    .select('id,name,created_at')
-    .eq('user_id', userId)
-    .order('name', { ascending: true });
+    .select('id,name,created_at,space_id')
+    .is('deleted_at', null);
+  const space = getQuerySpace();
+  if (space) query = query.eq('space_id', space);
+  const { data, error } = await query.order('name', { ascending: true });
   if (error) throw error;
   if (!data) return [];
-  return data.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at }));
+  return data.map((row) => ({ id: row.id, name: row.name, createdAt: row.created_at, spaceId: row.space_id ?? undefined }));
 }
 
 export async function createFileFolder(name: string, userId?: string): Promise<{ folder?: FileFolder; syncError?: string }> {
@@ -623,43 +735,41 @@ export async function createFileFolder(name: string, userId?: string): Promise<{
   if (!supabase || !userId) return { syncError: 'Sign in to create a folder in Supabase.' };
   const { data, error } = await supabase
     .from('outbound_folders')
-    .insert({ user_id: userId, name: cleaned })
+    .insert({ user_id: userId, name: cleaned, ...spaceFields(getSaveSpace()) })
     .select('id,name,created_at')
     .single();
   if (error || !data) return { syncError: libraryError(error ?? {}, 'Could not create that folder.') };
   return { folder: { id: data.id, name: data.name, createdAt: data.created_at } };
 }
 
-export async function renameFileFolder(folderId: string, name: string, userId?: string): Promise<{ syncError?: string }> {
+export async function renameFileFolder(folderId: string, name: string, userId?: string, version?: number): Promise<ItemResult> {
   const cleaned = cleanLibraryName(name);
   if (!cleaned) return { syncError: 'Give the folder a name.' };
   if (!supabase || !userId) return { syncError: 'Sign in to rename a folder in Supabase.' };
-  const { error } = await supabase.from('outbound_folders').update({ name: cleaned }).eq('id', folderId).eq('user_id', userId);
-  if (error) return { syncError: libraryError(error, 'Could not rename that folder.') };
-  return {};
+  const result = await updateOne('outbound_folders', folderId, { name: cleaned }, version);
+  if (result.error && result.error.code !== 'conflict') {
+    return { ...result, syncError: libraryError(result.error.cause as { code?: string; message?: string } ?? {}, result.syncError ?? 'Could not rename that folder.') };
+  }
+  return result;
 }
 
 export async function removeFileFolder(folderId: string, userId?: string): Promise<{ syncError?: string }> {
   if (!supabase || !userId) return { syncError: 'Sign in to delete a folder in Supabase.' };
-  const { error } = await supabase.from('outbound_folders').delete().eq('id', folderId).eq('user_id', userId);
+  const { error } = await supabase.from('outbound_folders').delete().eq('id', folderId);
   if (error) return { syncError: error.message };
   return {};
 }
 
-export async function renameStoredFile(fileId: string, filename: string, userId?: string): Promise<{ syncError?: string }> {
+export async function renameStoredFile(fileId: string, filename: string, userId?: string, version?: number): Promise<ItemResult> {
   const cleaned = cleanLibraryName(filename, 120);
   if (!cleaned) return { syncError: 'Give the file a name.' };
   if (!supabase || !userId) return { syncError: 'Sign in to rename a file in Supabase.' };
-  const { error } = await supabase.from('outbound_assets').update({ filename: cleaned }).eq('id', fileId).eq('user_id', userId);
-  if (error) return { syncError: error.message };
-  return {};
+  return updateOne('outbound_assets', fileId, { filename: cleaned }, version);
 }
 
-export async function moveStoredFile(fileId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+export async function moveStoredFile(fileId: string, folderId: string | null, userId?: string, version?: number): Promise<ItemResult> {
   if (!supabase || !userId) return { syncError: 'Sign in to move a file in Supabase.' };
-  const { error } = await supabase.from('outbound_assets').update({ folder_id: folderId }).eq('id', fileId).eq('user_id', userId);
-  if (error) return { syncError: error.message };
-  return {};
+  return updateOne('outbound_assets', fileId, { folder_id: folderId }, version);
 }
 
 function patchLocalCampaign(userId: string | undefined, id: string, patch: (item: SavedCampaign) => SavedCampaign) {
@@ -673,20 +783,21 @@ function patchLocalCampaign(userId: string | undefined, id: string, patch: (item
   }
 }
 
-export async function renameTemplateConfig(template: SavedTemplate, name: string, userId?: string): Promise<{ syncError?: string }> {
+export async function renameTemplateConfig(template: SavedTemplate, name: string, userId?: string): Promise<ItemResult> {
   const cleaned = cleanLibraryName(name, 120);
   if (!cleaned) return { syncError: 'Give it a name.' };
   if (supabase && userId) {
-    const row = await supabase.from('outbound_templates').select('metadata').eq('id', template.id).eq('user_id', userId).maybeSingle();
-    if (row.error) return { syncError: row.error.message };
+    const row = await supabase.from('outbound_templates').select('metadata').eq('id', template.id).maybeSingle();
+    if (row.error) return failed(row.error);
     const metadata = row.data?.metadata && typeof row.data.metadata === 'object' ? { ...row.data.metadata } : {};
     const previous = metadata.config && typeof metadata.config === 'object' ? metadata.config as StudioConfig : template.config;
-    const updated = await supabase
-      .from('outbound_templates')
-      .update({ name: cleaned, metadata: { ...metadata, config: { ...previous, campaignName: cleaned, templateId: template.id } } })
-      .eq('id', template.id)
-      .eq('user_id', userId);
-    if (updated.error) return { syncError: updated.error.message };
+    const updated = await updateOne(
+      'outbound_templates',
+      template.id,
+      { name: cleaned, metadata: { ...metadata, config: { ...previous, campaignName: cleaned, templateId: template.id } } },
+      template.version,
+    );
+    if (updated.syncError) return updated;
   }
   try {
     const current = listLocalTemplates(userId);
@@ -701,10 +812,10 @@ export async function renameTemplateConfig(template: SavedTemplate, name: string
   return {};
 }
 
-export async function moveTemplateConfig(templateId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+export async function moveTemplateConfig(templateId: string, folderId: string | null, userId?: string, version?: number): Promise<ItemResult> {
   if (!supabase || !userId) return { syncError: 'Sign in to move a template in Supabase.' };
-  const { error } = await supabase.from('outbound_templates').update({ folder_id: folderId }).eq('id', templateId).eq('user_id', userId);
-  if (error) return { syncError: error.message };
+  const moved = await updateOne('outbound_templates', templateId, { folder_id: folderId }, version);
+  if (moved.syncError) return moved;
   try {
     const current = listLocalTemplates(userId);
     writeLocalTemplates(current.map((item) => (item.id === templateId ? { ...item, folderId } : item)), userId);
@@ -714,23 +825,20 @@ export async function moveTemplateConfig(templateId: string, folderId: string | 
   return {};
 }
 
-export async function renameCampaign(campaign: SavedCampaign, name: string, userId?: string): Promise<{ syncError?: string }> {
+export async function renameCampaign(campaign: SavedCampaign, name: string, userId?: string): Promise<ItemResult> {
   const cleaned = cleanLibraryName(name, 120);
   if (!cleaned) return { syncError: 'Give it a name.' };
   if (supabase && userId) {
-    const row = await supabase.from('outbound_campaigns').select('config').eq('id', campaign.id).eq('user_id', userId).maybeSingle();
-    if (row.error) return { syncError: row.error.message };
+    const row = await supabase.from('outbound_campaigns').select('config').eq('id', campaign.id).maybeSingle();
+    if (row.error) return failed(row.error);
     const previous = row.data?.config && typeof row.data.config === 'object' ? row.data.config as StudioConfig : campaign.config;
-    const updated = await supabase
-      .from('outbound_campaigns')
-      .update({
-        name: cleaned,
-        config: { ...previous, campaignName: cleaned, id: campaign.id },
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', campaign.id)
-      .eq('user_id', userId);
-    if (updated.error) return { syncError: updated.error.message };
+    const updated = await updateOne(
+      'outbound_campaigns',
+      campaign.id,
+      { name: cleaned, config: { ...previous, campaignName: cleaned, id: campaign.id }, updated_at: new Date().toISOString() },
+      campaign.version,
+    );
+    if (updated.syncError) return updated;
   }
   patchLocalCampaign(userId, campaign.id, (item) => ({
     ...item,
@@ -741,10 +849,10 @@ export async function renameCampaign(campaign: SavedCampaign, name: string, user
   return {};
 }
 
-export async function moveCampaign(campaignId: string, folderId: string | null, userId?: string): Promise<{ syncError?: string }> {
+export async function moveCampaign(campaignId: string, folderId: string | null, userId?: string, version?: number): Promise<ItemResult> {
   if (!supabase || !userId) return { syncError: 'Sign in to move a campaign in Supabase.' };
-  const { error } = await supabase.from('outbound_campaigns').update({ folder_id: folderId }).eq('id', campaignId).eq('user_id', userId);
-  if (error) return { syncError: error.message };
+  const moved = await updateOne('outbound_campaigns', campaignId, { folder_id: folderId }, version);
+  if (moved.syncError) return moved;
   patchLocalCampaign(userId, campaignId, (item) => ({ ...item, folderId }));
   return {};
 }
@@ -793,7 +901,7 @@ export async function duplicateCampaign(
   const stripped = stripOutputColumns(campaign);
   const id = crypto.randomUUID();
   const config: StudioConfig = { ...stripped.config, id, campaignName: name, mode: campaign.mode, history: [] };
-  const saved = await saveCampaign(config, stripped.columns, stripped.contacts, userId);
+  const saved = await saveCampaign(config, stripped.columns, stripped.contacts, userId, { spaceId: campaign.spaceId ?? null });
   if (saved.syncError) return { campaign: saved, syncError: saved.syncError };
   const folderId = campaign.folderId ?? null;
   if (folderId && saved.cloud) {
@@ -810,29 +918,49 @@ async function patchCampaignConfig(
   fallback: StudioConfig | undefined,
   patch: (config: StudioConfig) => StudioConfig,
   userId?: string,
-): Promise<{ syncError?: string }> {
+): Promise<ItemResult> {
   if (supabase && userId) {
-    const row = await supabase.from('outbound_campaigns').select('config').eq('id', campaignId).eq('user_id', userId).maybeSingle();
-    if (row.error) return { syncError: row.error.message };
-    if (row.data) {
+    // Read-modify-write guarded by version: if someone saved in between, read again (up to 3 tries).
+    for (let attempt = 0; ; attempt++) {
+      const row = await supabase.from('outbound_campaigns').select('config,version').eq('id', campaignId).maybeSingle();
+      if (row.error) return failed(row.error);
+      if (!row.data) break;
       const previous = row.data.config && typeof row.data.config === 'object' ? row.data.config as StudioConfig : fallback;
-      if (previous) {
-        const updated = await supabase
-          .from('outbound_campaigns')
-          .update({ config: { ...patch(previous), id: campaignId } })
-          .eq('id', campaignId)
-          .eq('user_id', userId);
-        if (updated.error) return { syncError: updated.error.message };
-      }
+      if (!previous) break;
+      const version = typeof row.data.version === 'number' ? row.data.version : undefined;
+      const updated = await updateOne('outbound_campaigns', campaignId, { config: { ...patch(previous), id: campaignId } }, version);
+      if (!updated.syncError) break;
+      if (updated.error?.code !== 'conflict' || attempt >= 2) return updated;
     }
   }
   patchLocalCampaign(userId, campaignId, (item) => ({ ...item, config: patch(item.config) }));
   return {};
 }
 
-export async function setCampaignClient(campaign: SavedCampaign, client: string, userId?: string) {
+/**
+ * "Set client" now moves the campaign into an existing client space (an empty name moves it back
+ * to Internal). Spaces are created on the Members page, never here. Without known spaces (local
+ * mode, or a database before the spaces migration) it only sets the label, as before.
+ */
+export async function setCampaignClient(campaign: SavedCampaign, client: string, userId?: string): Promise<ItemResult> {
   const cleaned = cleanClient(client);
-  return patchCampaignConfig(campaign.id, campaign.config, (config) => ({ ...config, client: cleaned || undefined }), userId);
+  const spaces = getKnownSpaces();
+  if (!supabase || !userId || !spaces.length) {
+    return patchCampaignConfig(campaign.id, campaign.config, (config) => ({ ...config, client: cleaned || undefined }), userId);
+  }
+  const target = cleaned
+    ? spaces.find((space) => space.kind === 'client' && !space.archived_at && space.name.trim().toLowerCase() === cleaned.toLowerCase())
+    : spaces.find((space) => space.kind === 'internal');
+  if (!target) {
+    return { syncError: cleaned ? `There is no client space called “${cleaned}”. Create it on the Members page first.` : 'The Internal space is missing.' };
+  }
+  const { data, error } = await supabase.rpc('bulk_move', { entity: 'campaign', ids: [campaign.id], target_folder: null, target_space: target.id });
+  if (error) return failed(error);
+  const row = (data as Array<{ ok?: boolean; message?: string | null; error_code?: string | null }> | null)?.[0];
+  if (row && row.ok === false) return { syncError: row.message || 'Could not move that campaign.' };
+  campaignSpaces.set(campaign.id, target.id);
+  const label = target.kind === 'client' ? target.name : undefined;
+  return patchCampaignConfig(campaign.id, campaign.config, (config) => ({ ...config, client: label }), userId);
 }
 
 /** Adds a history event to a saved campaign without a full save (used for exports). */
@@ -852,7 +980,7 @@ export async function removeStoredFile(
   const path = file.storagePath || storagePathFromPublicUrl(file.publicUrl);
   if (!path) return {};
   if (!supabase || !userId) return { syncError: 'Sign in to delete files from Supabase.' };
-  if (!path.startsWith(`${userId}/`)) return { syncError: 'That file is outside your Supabase folder.' };
+  if (!isManagedPath(path, userId)) return { syncError: 'That file is outside your Supabase folders.' };
   const removed = await supabase.storage.from(ASSET_BUCKET).remove([path]);
   if (removed.error) return { syncError: removed.error.message };
   const deleted = await supabase.from('outbound_assets').delete().eq('storage_path', path);
@@ -870,7 +998,7 @@ export function subscribeTemplateChanges(userId: string | undefined, onChange: (
     .channel(`outbound-templates-${userId}`)
     .on(
       'postgres_changes',
-      { event: '*', schema: 'public', table: 'outbound_templates', filter: `user_id=eq.${userId}` },
+      { event: '*', schema: 'public', table: 'outbound_templates' },
       () => onChange(),
     )
     .subscribe();
@@ -923,7 +1051,8 @@ export async function persistImportedList(file: File | Blob, filename: string, u
     ods: 'application/vnd.oasis.opendocument.spreadsheet',
   };
   const contentType = mimeByExt[ext.toLowerCase()] || 'text/csv';
-  const path = `${userId}/lists/${crypto.randomUUID()}-${safeName.replace(/^\.+/, '')}`;
+  const spaceId = await resolveCampaignSpace(campaignId);
+  const path = storagePathFor(spaceId, userId, `lists/${crypto.randomUUID()}-${safeName.replace(/^\.+/, '')}`);
   const { error } = await supabase.storage.from(ASSET_BUCKET).upload(path, file, {
     contentType,
     upsert: false,
@@ -932,6 +1061,7 @@ export async function persistImportedList(file: File | Blob, filename: string, u
   const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(path);
   const { error: metadataError } = await supabase.from('outbound_assets').insert({
     user_id: userId,
+    ...spaceFields(spaceId),
     campaign_id: campaignId || null,
     filename: safeName,
     storage_path: path,
@@ -953,11 +1083,14 @@ export async function persistStudioImage(
   kind: StudioImageKind,
   userId: string,
   campaignId?: string,
+  /** Known space; undefined looks it up from the campaign (or uses the save space). */
+  spaceIdHint?: string | null,
 ) {
   if (!supabase) throw new Error('Supabase is not configured.');
   const blob = typeof source === 'string' ? await dataUrlBlob(source) : source;
   const ext = extensionFor(blob);
-  const path = `${userId}/uploads/${kind}/${crypto.randomUUID()}.${ext}`;
+  const spaceId = spaceIdHint === undefined ? await resolveCampaignSpace(campaignId) : spaceIdHint;
+  const path = storagePathFor(spaceId, userId, `uploads/${kind}/${crypto.randomUUID()}.${ext}`);
   const { error } = await supabase.storage.from(ASSET_BUCKET).upload(path, blob, {
     contentType: blob.type || `image/${ext}`,
     upsert: false,
@@ -966,6 +1099,7 @@ export async function persistStudioImage(
   const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(path);
   const { error: metadataError } = await supabase.from('outbound_assets').insert({
     user_id: userId,
+    ...spaceFields(spaceId),
     campaign_id: campaignId || null,
     filename: `${kind}.${ext}`,
     storage_path: path,
@@ -982,7 +1116,7 @@ export async function persistStudioImage(
   return { publicUrl: data.publicUrl, storagePath: path };
 }
 
-export async function persistConfigImages(config: StudioConfig, userId: string): Promise<StudioConfig> {
+export async function persistConfigImages(config: StudioConfig, userId: string, spaceId?: string | null): Promise<StudioConfig> {
   const next = { ...config };
   const jobs: Array<{ field: 'deskImage' | 'signatureImage' | 'customImage' | 'gifSourceDataUrl'; kind: StudioImageKind }> = [
     { field: 'deskImage', kind: 'desk' },
@@ -993,7 +1127,7 @@ export async function persistConfigImages(config: StudioConfig, userId: string):
   for (const { field, kind } of jobs) {
     const value = next[field];
     if (typeof value !== 'string' || !value.startsWith('data:')) continue;
-    const stored = await persistStudioImage(value, kind, userId, next.id);
+    const stored = await persistStudioImage(value, kind, userId, next.id, spaceId);
     next[field] = stored.publicUrl;
   }
   return next;
@@ -1003,7 +1137,7 @@ export async function removeStoredImage(url?: string, userId?: string) {
   if (!supabase || !url) return;
   const path = storagePathFromPublicUrl(url);
   if (!path) return;
-  if (userId && !path.startsWith(`${userId}/`)) return;
+  if (userId && !isManagedPath(path, userId)) return;
   await supabase.storage.from(ASSET_BUCKET).remove([path]);
   await supabase.from('outbound_assets').delete().eq('storage_path', path);
 }
@@ -1039,12 +1173,18 @@ export async function listStudioAssets(userId: string, mode: StudioMode, campaig
   // Paged, so a campaign of thousands of rows reviews in full (not just the newest 400 files).
   const client = supabase;
   const pageSize = 1000;
-  const fetchPage = (from: number) => client
-    .from('outbound_assets')
-    .select('id,filename,public_url,bytes,contact_key,content_type,campaign_id,storage_path,metadata,created_at')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .range(from, from + pageSize - 1);
+  // A saved campaign's files are found by campaign id (anyone's uploads); an unsaved one only has
+  // the uploader's own files, matched by the name's slug in the path.
+  const fetchPage = (from: number) => {
+    const base = client
+      .from('outbound_assets')
+      .select('id,filename,public_url,bytes,contact_key,content_type,campaign_id,storage_path,metadata,created_at')
+      .is('deleted_at', null);
+    const scoped = campaignId ? base.eq('campaign_id', campaignId) : base.eq('user_id', userId);
+    return scoped
+      .order('created_at', { ascending: false })
+      .range(from, from + pageSize - 1);
+  };
   const data: NonNullable<Awaited<ReturnType<typeof fetchPage>>['data']> = [];
   for (let from = 0; from < 20_000; from += pageSize) {
     const page = await fetchPage(from);
@@ -1093,10 +1233,11 @@ export async function uploadGeneratedAssets(
   if (!supabase) throw new Error('Supabase is not configured.');
   const date = new Date().toISOString().slice(0, 10);
   const slug = campaignSlug(campaignName);
+  const spaceId = await resolveCampaignSpace(options.campaignId);
   const results: GeneratedAsset[] = [];
   for (const asset of assets) {
     const version = crypto.randomUUID();
-    const path = `${userId}/${slug}/${date}/${version}-${asset.filename}`;
+    const path = storagePathFor(spaceId, userId, `${slug}/${date}/${version}-${asset.filename}`);
     const ext = asset.filename.split('.').pop()?.toLowerCase();
     const contentType = asset.blob.type
       || (ext === 'gif' ? 'image/gif' : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png');
@@ -1112,12 +1253,13 @@ export async function uploadGeneratedAssets(
     // The GIF's JPG poster goes up beside it. It is optional: if it fails, the GIF still counts as uploaded.
     let still = asset.still;
     if (still?.blob.size) {
-      const stillPath = `${userId}/${slug}/${date}/${version}-${still.filename}`;
+      const stillPath = storagePathFor(spaceId, userId, `${slug}/${date}/${version}-${still.filename}`);
       const { error: stillError } = await supabase.storage.from(ASSET_BUCKET).upload(stillPath, still.blob, { contentType: 'image/jpeg', upsert: false });
       if (!stillError) still = { ...still, publicUrl: supabase.storage.from(ASSET_BUCKET).getPublicUrl(stillPath).data.publicUrl };
     }
     const { error: metadataError } = await supabase.from('outbound_assets').insert({
       user_id: userId,
+      ...spaceFields(spaceId),
       campaign_id: options.campaignId || null,
       filename: asset.filename,
       storage_path: path,
@@ -1154,14 +1296,22 @@ export async function saveCarouselFile(
   userId: string,
 ) {
   if (!supabase) throw new Error('Supabase is not configured.');
-  if (!meta.storagePath.startsWith(`${userId}/carousels/`)) throw new Error('That carousel is outside your Supabase folder.');
+  if (!isCarouselPath(meta.storagePath, userId)) throw new Error('That carousel is outside your Supabase folders.');
+  // A deck saved before keeps its file (legacy or space path); a new deck goes to the save space.
+  const known = await supabase.from('outbound_assets').select('id,storage_path').eq('metadata->>carouselId', meta.id).limit(1);
+  if (known.error) throw known.error;
+  const knownRow = (known.data as Array<{ id: string; storage_path: string }> | null)?.[0];
+  const spaceId = getSaveSpace();
+  const storagePath = knownRow?.storage_path && isCarouselPath(knownRow.storage_path, userId)
+    ? knownRow.storage_path
+    : storagePathFor(spaceId, userId, `carousels/${meta.id}.json`);
   const blob = new Blob([body], { type: 'text/plain' });
-  const { error } = await supabase.storage.from(ASSET_BUCKET).upload(meta.storagePath, blob, {
+  const { error } = await supabase.storage.from(ASSET_BUCKET).upload(storagePath, blob, {
     contentType: 'text/plain',
     upsert: true,
   });
   if (error) throw error;
-  const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(meta.storagePath);
+  const { data } = supabase.storage.from(ASSET_BUCKET).getPublicUrl(storagePath);
   const record = {
     filename: meta.filename,
     public_url: data.publicUrl,
@@ -1170,23 +1320,28 @@ export async function saveCarouselFile(
     contact_key: 'carousel',
     metadata: { kind: 'carousel', role: 'carousel', mode: 'carousel', title: meta.title, carouselId: meta.id, savedAt: meta.savedAt },
   };
-  const existing = await supabase.from('outbound_assets').select('id').eq('user_id', userId).eq('storage_path', meta.storagePath).limit(1);
+  const existing = knownRow?.storage_path === storagePath
+    ? { data: [knownRow], error: null }
+    : await supabase.from('outbound_assets').select('id').eq('storage_path', storagePath).limit(1);
   if (existing.error) throw existing.error;
   const rowId = (existing.data as Array<{ id: string }> | null)?.[0]?.id;
   const written = rowId
-    ? await supabase.from('outbound_assets').update(record).eq('id', rowId).eq('user_id', userId)
-    : await supabase.from('outbound_assets').insert({ ...record, user_id: userId, campaign_id: null, storage_path: meta.storagePath });
+    ? await supabase.from('outbound_assets').update(record).eq('id', rowId)
+    : await supabase.from('outbound_assets').insert({ ...record, user_id: userId, ...spaceFields(spaceFromStoragePath(storagePath) ?? spaceId), campaign_id: null, storage_path: storagePath });
   if (written.error) throw written.error;
-  return { storagePath: meta.storagePath, publicUrl: data.publicUrl };
+  return { storagePath, publicUrl: data.publicUrl };
 }
 
 export async function listCarouselFiles(userId?: string): Promise<CarouselFileRow[]> {
   if (!supabase || !userId) return [];
-  const { data, error } = await supabase
+  let query = supabase
     .from('outbound_assets')
     .select('id,filename,storage_path,metadata,created_at')
-    .eq('user_id', userId)
     .eq('metadata->>kind', 'carousel')
+    .is('deleted_at', null);
+  const space = getQuerySpace();
+  if (space) query = query.eq('space_id', space);
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(200);
   if (error) throw error;
@@ -1204,7 +1359,7 @@ export async function listCarouselFiles(userId?: string): Promise<CarouselFileRo
 
 export async function loadCarouselFile(storagePath: string, userId?: string) {
   if (!supabase || !userId) throw new Error('Sign in to open carousels saved in Supabase.');
-  if (!storagePath.startsWith(`${userId}/carousels/`)) throw new Error('That carousel is outside your Supabase folder.');
+  if (!isCarouselPath(storagePath, userId)) throw new Error('That carousel is outside your Supabase folders.');
   const { data, error } = await supabase.storage.from(ASSET_BUCKET).download(storagePath);
   if (error) throw error;
   return data.text();
