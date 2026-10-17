@@ -1,0 +1,43 @@
+name: SQL tests
+
+# Supabase migrations, RLS policies, RPCs and rollbacks, tested against a throwaway Postgres 16.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'artifacts/gtm-studio/supabase/**'
+      - 'artifacts/gtm-studio/scripts/sql-test.sh'
+      - '.github/workflows/sql-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sql-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sql:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SQL_TEST_EXTERNAL: '1'
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Migrations, RLS, RPCs and rollbacks
+        run: artifacts/gtm-studio/scripts/sql-test.sh

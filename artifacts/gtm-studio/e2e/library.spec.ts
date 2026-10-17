@@ -49,7 +49,9 @@ test('Duplicate saves a fresh copy in the same folder, without generated columns
   expect(errors).toEqual([]);
 });
 
-test('Delete waits for Undo, and still happens when you leave the page', async ({ page, context }) => {
+const rpcCalls = (requests: FakeRequest[], fn: string) => requests.filter((request) => request.table === 'rpc' && request.url.endsWith(`/rpc/${fn}`));
+
+test('Delete moves to Trash with Undo, and never hard-deletes', async ({ page, context }) => {
   const fake = await fakeSupabase(context, { campaigns: rows(), folders: [folder] });
   await page.goto('/');
   await expect(item(page, 'Spring notes')).toBeVisible();
@@ -57,31 +59,43 @@ test('Delete waits for Undo, and still happens when you leave the page', async (
 
   await openMenu(page, 'Spring notes');
   await page.getByRole('menuitem', { name: 'Delete' }).click();
+  await expect(page.getByText('Moved to Trash')).toBeVisible();
   await expect(item(page, 'Spring notes')).toHaveCount(0);
+  expect(rpcCalls(fake.requests, 'bulk_trash').map((request) => request.body)).toEqual([{ entity: 'campaign', ids: ['c1'] }]);
+
   await page.getByRole('button', { name: 'Undo' }).click();
   await expect(item(page, 'Spring notes')).toBeVisible();
-  await page.waitForTimeout(1500);
+  expect(rpcCalls(fake.requests, 'bulk_restore').map((request) => request.body)).toEqual([{ entity: 'campaign', ids: ['c1'] }]);
   expect(campaignDeletes(fake.requests)).toEqual([]);
-
-  // Delete again and leave the desk before the toast runs out: the delete runs on the way out.
-  await openMenu(page, 'Spring notes');
-  await page.getByRole('menuitem', { name: 'Delete' }).click();
-  await expect(item(page, 'Spring notes')).toHaveCount(0);
-  expect(campaignDeletes(fake.requests)).toEqual([]);
-  await page.locator('a.studio-tile[data-studio="memes"]').click();
-  await expect(page).toHaveURL(/\/memes$/);
-  await expect.poll(() => campaignDeletes(fake.requests).map((request) => new URL(request.url).searchParams.get('id'))).toEqual(['eq.c1']);
 });
 
-test('Delete runs by itself once the undo window closes', async ({ page, context }) => {
-  const fake = await fakeSupabase(context, { campaigns: rows(), folders: [folder] });
+test('Trash shows who deleted what and how long is left; Delete forever asks first and removes stored files', async ({ page, context }) => {
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000 - 60_000).toISOString();
+  const path = 'spaces/s1/c1/row-2.png';
+  const fake = await fakeSupabase(context, {
+    campaigns: [...rows(), campaignRow('c9', 'Old pitch', { deleted_at: threeDaysAgo, deleted_by: '00000000-0000-4000-8000-000000000001' })],
+    folders: [folder],
+    assets: [{ id: 'a1', campaign_id: 'c9', filename: 'row-2.png', storage_path: path, public_url: `https://e2e-test.supabase.co/storage/v1/object/public/outbound-assets/${path}`, created_at: '2026-10-01T00:00:00Z' }],
+    storageObjects: [{ path, size: 100 }],
+  });
   await page.goto('/');
-  await openMenu(page, 'Spring notes');
-  await page.getByRole('menuitem', { name: 'Delete' }).click();
-  await page.waitForTimeout(5000);
+  await expect(item(page, 'Spring notes')).toBeVisible();
+  await expect(item(page, 'Old pitch')).toHaveCount(0);
+
+  await page.getByRole('group', { name: 'Show' }).getByRole('button', { name: 'Trash' }).click();
+  const trashed = page.locator('li[data-trash-name="Old pitch"]');
+  await expect(trashed).toBeVisible();
+  await expect(trashed.locator('[data-trash-meta]')).toHaveText('Campaign · Deleted by you · 27 days left');
+
+  await page.getByRole('checkbox', { name: 'Select Old pitch' }).check();
+  await page.getByRole('toolbar', { name: 'Trash actions' }).getByRole('button', { name: 'Delete forever' }).click();
+  const dialog = page.locator('[data-purge-dialog]');
+  await expect(dialog).toContainText('Delete 1 item forever?');
+  await dialog.getByRole('button', { name: 'Delete 1 item forever' }).click();
+  await expect(trashed).toHaveCount(0);
+  expect(rpcCalls(fake.requests, 'bulk_purge').map((request) => request.body)).toEqual([{ entity: 'campaign', ids: ['c9'] }]);
+  await expect.poll(() => fake.requests.filter((request) => request.table === 'storage:remove').map((request) => request.body)).toEqual([{ prefixes: [path] }]);
   expect(campaignDeletes(fake.requests)).toEqual([]);
-  await expect.poll(() => campaignDeletes(fake.requests).length, { timeout: 15_000 }).toBe(1);
-  await expect(item(page, 'Spring notes')).toHaveCount(0);
 });
 
 test('Library filters by client and searches client and company names', async ({ page, context }) => {

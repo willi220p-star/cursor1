@@ -1,9 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import type { User } from '@supabase/supabase-js';
-import { LogOut, Menu, Moon, Search, Settings2, Sun } from 'lucide-react';
+import { History, LogOut, Menu, Moon, Search, Settings2, Sun, Users } from 'lucide-react';
 import { Link, useLocation } from 'wouter';
 import { CommandPalette } from '@/components/command-palette';
+import { SpaceSwitcher } from '@/components/space-switcher';
 import { PanelBoundary } from '@/components/error-boundary';
+import { NotificationBell } from '@/components/notification-bell';
+import { SyncStatusPill } from '@/components/sync-status';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,11 +17,14 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { useTheme } from '@/lib/theme';
+import { orgRoleLabels, spaceRoleLabels, clientRole } from '@/studio/access';
+import { canSeeActivity, canUseStudios, useAccess } from '@/studio/access-context';
 import { signOutUser } from '@/studio/auth';
 import { supabaseConfigured } from '@/studio/cloud';
 import { studios } from '@/studio/studios';
 
-const tabs = [{ key: 'desk', href: '/', label: 'Desk' }, ...studios.map(({ key, href, label }) => ({ key, href, label }))];
+const deskTab = { key: 'desk', href: '/', label: 'Desk' };
+const tabs = [deskTab, ...studios.map(({ key, href, label }) => ({ key, href, label }))];
 
 export function BrandLockup() {
   return (
@@ -30,9 +36,12 @@ export function BrandLockup() {
 }
 
 function StudioTabs({ location, onNavigate }: { location: string; onNavigate?: () => void }) {
+  // Client Viewers never generate, so they only get the Desk.
+  const access = useAccess();
+  const shown = canUseStudios(access) ? tabs : [deskTab];
   return (
     <>
-      {tabs.map((tab) => (
+      {shown.map((tab) => (
         <Link
           key={tab.key}
           href={tab.href}
@@ -63,8 +72,13 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const access = useAccess();
   const email = user.email ?? 'Operator';
   const initials = email.slice(0, 2).toUpperCase();
+  const showMembers = access.can('members.manage', null);
+  const showActivity = canSeeActivity(access);
+  const memberRole = clientRole(access.memberships);
+  const roleLabel = access.orgRole === 'client' && memberRole ? spaceRoleLabels[memberRole] : orgRoleLabels[access.orgRole];
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -90,12 +104,16 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
             <StudioTabs location={location} />
           </nav>
           <div className="nav-actions">
+            <span className="hidden md:inline-flex"><SpaceSwitcher /></span>
+            <SyncStatusPill />
             <button type="button" className="nav-search" onClick={() => setSearchOpen(true)} aria-label="Search, shortcut Command K">
               <Search size={15} aria-hidden />
               <span className="hidden lg:inline">Search</span>
               <kbd className="hidden lg:inline">⌘K</kbd>
             </button>
-            <ThemeButton />
+            {supabaseConfigured && <NotificationBell />}
+            {/* On phones the theme lives in Settings, leaving room for the bell. */}
+            <span className="hidden sm:inline-flex"><ThemeButton /></span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="avatar-btn" aria-label={`Account menu for ${email}`}>{initials}</button>
@@ -103,12 +121,23 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
               <DropdownMenuContent align="end" className="min-w-60 border-border bg-popover">
                 <DropdownMenuLabel className="flex flex-col gap-2 py-2">
                   <span className="truncate text-sm font-semibold">{email}</span>
+                  <span className="text-xs font-normal text-muted-foreground" data-testid="role-label">{roleLabel}</span>
                   <span className="status-chip w-fit" role="status">
                     <span className={`dot ${supabaseConfigured ? 'is-live' : 'is-local'}`} aria-hidden />
                     <span className="status-chip-text">{supabaseConfigured ? 'Live sync' : 'Local only'}</span>
                   </span>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                {showMembers && (
+                  <DropdownMenuItem asChild className="min-h-11">
+                    <Link href="/members"><Users aria-hidden /> Members</Link>
+                  </DropdownMenuItem>
+                )}
+                {showActivity && (
+                  <DropdownMenuItem asChild className="min-h-11">
+                    <Link href="/activity"><History aria-hidden /> Activity</Link>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem asChild className="min-h-11">
                   <Link href="/settings"><Settings2 aria-hidden /> Settings</Link>
                 </DropdownMenuItem>
@@ -125,8 +154,11 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <SheetDescription className="sr-only">Move between the desk and the studios.</SheetDescription>
           <div className="mb-6"><BrandLockup /></div>
+          <div className="mb-4"><SpaceSwitcher onChange={() => setMobileOpen(false)} /></div>
           <nav className="sheet-nav" aria-label="Studios">
             <StudioTabs location={location} onNavigate={() => setMobileOpen(false)} />
+            {showMembers && <Link href="/members" onClick={() => setMobileOpen(false)} data-studio="desk" aria-current={location === '/members' ? 'page' : undefined} className="studio-tab">Members</Link>}
+            {showActivity && <Link href="/activity" onClick={() => setMobileOpen(false)} data-studio="desk" aria-current={location === '/activity' ? 'page' : undefined} className="studio-tab">Activity</Link>}
             <Link href="/settings" onClick={() => setMobileOpen(false)} data-studio="desk" aria-current={location === '/settings' ? 'page' : undefined} className="studio-tab">Settings</Link>
           </nav>
         </SheetContent>

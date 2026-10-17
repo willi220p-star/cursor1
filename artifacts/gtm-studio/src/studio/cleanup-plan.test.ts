@@ -5,6 +5,7 @@ import {
   displayName,
   formatBytes,
   normalizeStoragePath,
+  ownedRootDepth,
   planCleanup,
   sizeFolders,
   storagePathFromUrl,
@@ -243,5 +244,30 @@ describe('cleaned history events', () => {
     expect(campaignStatus({ history: [history[1]] } as StudioConfig)).toBe('draft');
     expect(formatHistoryEntry({ at: new Date(2026, 9, 9, 15, 0).toISOString(), kind: 'cleaned', rows: 37 })).toBe('Cleaned up 37 old files · 9 Oct 15:00');
     expect(formatHistoryEntry({ at: 'bad', kind: 'cleaned', rows: 1 })).toBe('Cleaned up 1 old file');
+  });
+});
+
+describe('team space storage', () => {
+  const space = 'space-acme';
+  const sdir = `spaces/${space}/spring/2026-10-09`;
+  const sold = `spaces/${space}/spring/2026-10-01`;
+
+  it('removes old versions under the campaign space folder, never another space or reserved folders', () => {
+    const current = `${sdir}/v2-row-2.png`;
+    const rows = [
+      gen('a1', `${sold}/v1-row-2.png`),
+      gen('a2', current),
+      gen('a3', `spaces/other-space/spring/v1-row-2.png`),
+      gen('a4', `spaces/${space}/uploads/v1-row-2.png`),
+    ];
+    const plan = planCleanup(campaign([{ handwritten_url: url(current) }]), rows, { userId: uid, spaceId: space });
+    expect(plan.remove.map((file) => file.path)).toEqual([`${sold}/v1-row-2.png`]);
+  });
+
+  it('owned root depth: legacy user folder 1, space folder 2, anything else 0', () => {
+    expect(ownedRootDepth(`${uid}/x/a.png`, uid, space)).toBe(1);
+    expect(ownedRootDepth(`spaces/${space}/x/a.png`, uid, space)).toBe(2);
+    expect(ownedRootDepth('spaces/other/x/a.png', uid, space)).toBe(0);
+    expect(ownedRootDepth('someone-else/x/a.png', uid, space)).toBe(0);
   });
 });

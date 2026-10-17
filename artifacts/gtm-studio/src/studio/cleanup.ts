@@ -1,5 +1,5 @@
 import { appendCampaignHistory, supabase } from './cloud';
-import { ASSET_BUCKET, chunk, planCleanup, sizeFolders, type CleanupAssetRow, type CleanupPlan } from './cleanup-plan';
+import { ASSET_BUCKET, chunk, ownedRootDepth, planCleanup, sizeFolders, type CleanupAssetRow, type CleanupPlan } from './cleanup-plan';
 import type { Contact, SavedCampaign, StudioMode } from './types';
 
 /**
@@ -10,17 +10,18 @@ import type { Contact, SavedCampaign, StudioMode } from './types';
 const PAGE = 1000;
 const REMOVE_BATCH = 100;
 
-export type PreparedCleanup = CleanupPlan & { campaignId: string };
+export type PreparedCleanup = CleanupPlan & { campaignId: string; spaceId?: string | null };
 
-async function campaignAssetRows(campaignId: string, userId: string) {
+// Row-level security decides which campaigns and files this person can see; no user_id filter.
+async function campaignAssetRows(campaignId: string) {
   if (!supabase) return [];
   const rows: CleanupAssetRow[] = [];
   for (let from = 0; from < 20 * PAGE; from += PAGE) {
     const { data, error } = await supabase
       .from('outbound_assets')
       .select('id,campaign_id,storage_path,public_url,filename,bytes,metadata,created_at')
-      .eq('user_id', userId)
       .eq('campaign_id', campaignId)
+      .is('deleted_at', null)
       .order('created_at', { ascending: true })
       .range(from, from + PAGE - 1);
     if (error) throw error;
@@ -58,21 +59,23 @@ export async function prepareCampaignCleanup(campaign: SavedCampaign, userId?: s
   const refuse = (refused: string): PreparedCleanup => ({ campaignId: campaign.id, keep: [], remove: [], bytes: 0, unknownSizes: 0, refused });
   if (!supabase || !userId) return refuse('Sign in to clean up files stored in Supabase.');
   if (!campaign.cloud) return refuse('This campaign is only saved in this browser. Save it to Supabase first.');
-  const campaigns = await supabase.from('outbound_campaigns').select('id,mode,source_data').eq('user_id', userId);
+  const campaigns = await supabase.from('outbound_campaigns').select('id,mode,source_data,space_id');
   if (campaigns.error) throw campaigns.error;
-  const all = (campaigns.data ?? []) as Array<{ id: string; mode: StudioMode; source_data: Contact[] | null }>;
+  const all = (campaigns.data ?? []) as Array<{ id: string; mode: StudioMode; source_data: Contact[] | null; space_id?: string | null }>;
   const current = all.find((row) => row.id === campaign.id);
   if (!current) return refuse('This campaign is not in Supabase any more. Refresh the library.');
-  const rows = await campaignAssetRows(campaign.id, userId);
+  const rows = await campaignAssetRows(campaign.id);
+  const spaceId = current.space_id ?? null;
   const options = {
     userId,
+    spaceId,
     otherCampaigns: all.filter((row) => row.id !== campaign.id).map((row) => ({ id: row.id, contacts: row.source_data })),
   };
   const campaignInput = { id: campaign.id, mode: current.mode || campaign.mode, contacts: current.source_data ?? [] };
   const draft = planCleanup(campaignInput, rows, options);
-  if (draft.refused || !draft.remove.length) return { ...draft, campaignId: campaign.id };
+  if (draft.refused || !draft.remove.length) return { ...draft, campaignId: campaign.id, spaceId };
   const sizes = await objectSizes(draft.remove.map((file) => file.path));
-  return { ...planCleanup(campaignInput, rows, { ...options, sizes }), campaignId: campaign.id };
+  return { ...planCleanup(campaignInput, rows, { ...options, sizes }), campaignId: campaign.id, spaceId };
 }
 
 export type CleanupResult = { deleted: number; freedBytes: number; unknownSizes: number; failures: string[] };
@@ -82,7 +85,8 @@ export async function runCampaignCleanup(plan: PreparedCleanup, userId?: string)
   const result: CleanupResult = { deleted: 0, freedBytes: 0, unknownSizes: 0, failures: [] };
   if (!supabase || !userId) return { ...result, failures: ['Sign in to delete files from Supabase.'] };
   if (plan.refused) return { ...result, failures: [plan.refused] };
-  const files = plan.remove.filter((file) => file.path.startsWith(`${userId}/`) && file.storagePath.startsWith(`${userId}/`));
+  const owned = (path: string) => ownedRootDepth(path, userId, plan.spaceId) > 0;
+  const files = plan.remove.filter((file) => owned(file.path) && owned(file.storagePath));
   for (const batch of chunk(files, REMOVE_BATCH)) {
     const paths = batch.map((file) => file.storagePath);
     const removed = await supabase.storage.from(ASSET_BUCKET).remove(paths);
@@ -101,7 +105,6 @@ export async function runCampaignCleanup(plan: PreparedCleanup, userId?: string)
     const rows = await supabase
       .from('outbound_assets')
       .delete()
-      .eq('user_id', userId)
       .eq('campaign_id', plan.campaignId)
       .in('storage_path', rowPaths);
     if (rows.error) result.failures.push(`Files deleted, but ${rowPaths.length} library ${rowPaths.length === 1 ? 'entry' : 'entries'} stayed: ${rows.error.message}`);

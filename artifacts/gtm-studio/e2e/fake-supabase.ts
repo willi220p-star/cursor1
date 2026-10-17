@@ -1,4 +1,4 @@
-import type { BrowserContext, Page, Request } from '@playwright/test';
+import type { BrowserContext, Page, Request, Route, WebSocketRoute } from '@playwright/test';
 
 export const userId = '00000000-0000-4000-8000-000000000001';
 const user = { id: userId, aud: 'authenticated', role: 'authenticated', email: 'operator@dgk.internal', app_metadata: {}, user_metadata: {}, created_at: '2026-01-01T00:00:00Z' };
@@ -18,7 +18,13 @@ export type FakeOptions = {
   storageObjects?: Array<{ path: string; size: number }>;
   /** Let Google Fonts through (default: blocked). For checks that must see a font really draw. */
   allowFonts?: boolean;
-};
+  /** Turns on the reviews/comments/notifications/profiles tables and the realtime stub. */
+  reviews?: ReviewTables;
+  /** Rows served for GET /rest/v1/outbound_templates. */
+  templates?: Record<string, unknown>[];
+  /** bulk_* RPC rows for these ids come back failed with this code and message. */
+  bulkFailures?: Record<string, { code: string; message: string }>;
+} & SpacesOptions;
 
 /** `table` is the REST table, or `storage:list` / `storage:remove` for bucket calls. */
 export type FakeRequest = { method: string; table: string; url: string; body: unknown };
@@ -38,10 +44,15 @@ function requestBody(request: Request) {
 export async function fakeSupabase(context: BrowserContext, options: FakeOptions = {}) {
   const { signedIn = true, failLists = false, contacts, mode } = options;
   const campaigns = [...(options.campaigns ?? [])];
-  const folders = options.folders ?? [];
+  const folders = [...(options.folders ?? [])];
   const assets = [...(options.assets ?? [])];
+  const templates = [...(options.templates ?? [])];
+  const bulkFailures = new Map(Object.entries(options.bulkFailures ?? {}));
+  const tables: BulkTables = { outbound_campaigns: campaigns, outbound_templates: templates, outbound_assets: assets, outbound_folders: folders };
   const objects = [...(options.storageObjects ?? [])];
   const requests: FakeRequest[] = [];
+  const reviewState = options.reviews ? await reviewTables(context, options.reviews) : null;
+  const spacesFake = createSpacesFake(options, requests);
   await context.route(/supabase\.co/, (route) => {
     const request = route.request();
     const url = request.url();
@@ -65,6 +76,8 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       return route.fulfill({ json: removed.map((item) => ({ name: item.path })) });
     }
     if (url.includes('/storage/v1/')) return route.fulfill({ json: { Key: 'ok' } });
+    const handled = spacesFake.handle(route, request);
+    if (handled) return handled;
     if (url.includes('/rest/v1/')) {
       const table = new URL(url).pathname.split('/rest/v1/')[1]?.split('/')[0] ?? '';
       const body: unknown = requestBody(request);
@@ -72,10 +85,17 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // 500 is not retried by the Supabase client, so the error shows at once.
       if (failLists && method === 'GET') return route.fulfill({ status: 500, json: { message: 'Internal error' } });
       const wantsObject = (request.headers().accept ?? '').includes('vnd.pgrst.object');
+      if (reviewState) {
+        const handled = reviewState.handle({ table, method, url, body, wantsObject, prefer: request.headers().prefer ?? '', campaigns, assets });
+        if (handled) return route.fulfill(handled);
+      }
+      if (table === 'rpc') return route.fulfill({ json: bulkRpc(url, body, tables, bulkFailures) });
+      if (method === 'GET' && table in tables) return route.fulfill({ json: bulkSelect(url, tables[table as keyof BulkTables], wantsObject) });
+      if (method === 'GET' && table === 'profiles') return route.fulfill({ json: [{ user_id: userId, display_name: 'Operator', email: user.email }] });
       if (table === 'outbound_campaigns') {
         if (method === 'GET') {
           const id = new URL(url).searchParams.get('id')?.replace(/^eq\./, '');
-          const rows = id ? campaigns.filter((row) => row.id === id) : campaigns;
+          const rows = filterBySpace(id ? campaigns.filter((row) => row.id === id) : campaigns, url);
           return route.fulfill({ json: wantsObject ? rows[0] ?? null : rows });
         }
         if (method === 'POST' && body && typeof body === 'object') {
@@ -98,10 +118,10 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
           return route.fulfill({ json: [] });
         }
       }
-      if (table === 'outbound_folders' && method === 'GET') return route.fulfill({ json: folders });
+      if (table === 'outbound_folders' && method === 'GET') return route.fulfill({ json: filterBySpace(folders, url) });
       if (table === 'outbound_assets' && method === 'GET') {
         const campaignId = new URL(url).searchParams.get('campaign_id')?.replace(/^eq\./, '');
-        return route.fulfill({ json: campaignId ? assets.filter((row) => row.campaign_id === campaignId) : assets });
+        return route.fulfill({ json: filterBySpace(campaignId ? assets.filter((row) => row.campaign_id === campaignId) : assets, url) });
       }
       return route.fulfill({ json: [] });
     }
@@ -119,7 +139,7 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // Storage blocked; the app still renders signed out.
     }
   }, [signedIn, JSON.stringify(session), mode ? `gtm-contacts:${userId}:${mode}` : '', contacts ? JSON.stringify(contacts) : ''] as const);
-  return { requests, campaigns, assets, objects };
+  return { requests, campaigns, assets, objects, folders, templates, bulkFailures, reviewTables: reviewState?.tables, pushRealtime: reviewState?.push, ...spacesFake.state };
 }
 
 /** A saved campaign row as Supabase returns it. */
@@ -151,4 +171,378 @@ export function sampleContacts(count: number) {
     const [name, company, image] = people[index % people.length];
     return { row: index + 2, name: `${name} ${index}`, company, role: 'Director', city: 'Darwin', image_link: image, msg: 'Worth a quick chat?' };
   });
+}
+
+// --- reviews & notifications ---
+// Opt-in (FakeOptions.reviews): PostgREST-style eq/in/is filters, order, limit/offset and exact counts
+// for reviews, comments, notifications and profiles, plus a realtime websocket stub that accepts
+// channel joins and replays inserts/updates on those tables to matching postgres_changes bindings.
+
+export type ReviewTables = {
+  reviews?: Record<string, unknown>[];
+  comments?: Record<string, unknown>[];
+  notifications?: Record<string, unknown>[];
+  profiles?: Record<string, unknown>[];
+};
+
+const REVIEW_TABLES = ['reviews', 'comments', 'notifications', 'profiles'] as const;
+type ReviewTable = (typeof REVIEW_TABLES)[number];
+type Row = Record<string, unknown>;
+type Fulfil = { status?: number; json?: unknown; body?: string; headers?: Record<string, string> };
+
+function matches(row: Row, column: string, raw: string): boolean {
+  const value = row[column];
+  if (raw.startsWith('eq.')) return String(value) === raw.slice(3);
+  if (raw.startsWith('neq.')) return String(value) !== raw.slice(4);
+  if (raw === 'is.null') return value === null || value === undefined;
+  if (raw === 'not.is.null') return value !== null && value !== undefined;
+  if (raw.startsWith('in.(')) {
+    const list = raw.slice(4, -1).split(',').map((item) => item.replace(/^"|"$/g, ''));
+    return list.includes(String(value));
+  }
+  return true;
+}
+
+const RESERVED = new Set(['select', 'order', 'limit', 'offset', 'columns', 'on_conflict']);
+
+/** Rows matching the URL's filters, ordered and paged like PostgREST. */
+export function filterRows(rows: Row[], url: string): Row[] {
+  const params = new URL(url).searchParams;
+  let out = rows.filter((row) => [...params.entries()].every(([key, raw]) => RESERVED.has(key) || matches(row, key, raw)));
+  const order = params.get('order');
+  if (order) {
+    const [column, direction] = order.split(',')[0].split('.');
+    out = [...out].sort((a, b) => {
+      const left = String(a[column] ?? '');
+      const right = String(b[column] ?? '');
+      return (left < right ? -1 : left > right ? 1 : 0) * (direction === 'desc' ? -1 : 1);
+    });
+  }
+  const offset = Number(params.get('offset') ?? 0);
+  const limit = params.get('limit');
+  return out.slice(offset, limit ? offset + Number(limit) : undefined);
+}
+
+function filterMatches(row: Row, filter?: string) {
+  if (!filter) return true;
+  const [column, ...rest] = filter.split('=');
+  return matches(row, column, rest.join('='));
+}
+
+type Binding = { id: number; event: string; table: string; filter?: string };
+type Joined = { ws: WebSocketRoute; topic: string; joinRef: string; bindings: Binding[] };
+
+async function reviewTables(context: BrowserContext, seed: ReviewTables) {
+  const tables: Record<ReviewTable, Row[]> = {
+    reviews: [...(seed.reviews ?? [])],
+    comments: [...(seed.comments ?? [])],
+    notifications: [...(seed.notifications ?? [])],
+    profiles: [...(seed.profiles ?? [])],
+  };
+  const joined: Joined[] = [];
+  let nextBinding = 1;
+  let ref = 1000;
+
+  await context.routeWebSocket(/\/realtime\/v1\/websocket/, (ws) => {
+    ws.onMessage((message) => {
+      let frame: unknown;
+      try {
+        frame = JSON.parse(String(message));
+      } catch {
+        return;
+      }
+      // Protocol 2.0.0 frames are [join_ref, ref, topic, event, payload].
+      if (!Array.isArray(frame)) return;
+      const [joinRef, msgRef, topic, event, payload] = frame as [string | null, string, string, string, Row];
+      const reply = (response: unknown) => ws.send(JSON.stringify([joinRef, msgRef, topic, 'phx_reply', { status: 'ok', response }]));
+      if (event === 'phx_join') {
+        const config = (payload?.config ?? {}) as { postgres_changes?: Array<{ event: string; schema: string; table: string; filter?: string }> };
+        const bindings = (config.postgres_changes ?? []).map((binding) => ({ ...binding, id: nextBinding++ }));
+        joined.push({ ws, topic, joinRef: String(joinRef), bindings });
+        reply({ postgres_changes: bindings });
+      } else if (event === 'phx_leave') {
+        const index = joined.findIndex((item) => item.ws === ws && item.topic === topic);
+        if (index >= 0) joined.splice(index, 1);
+        reply({});
+      } else if (event === 'heartbeat') {
+        reply({});
+      }
+    });
+  });
+
+  /** Sends a postgres_changes event to every channel bound to this table (and filter). */
+  const push = (table: string, type: 'INSERT' | 'UPDATE' | 'DELETE', record: Row) => {
+    for (const channel of joined) {
+      const ids = channel.bindings
+        .filter((binding) => binding.table === table && (binding.event === '*' || binding.event === type) && filterMatches(record, binding.filter))
+        .map((binding) => binding.id);
+      if (!ids.length) continue;
+      const data = { schema: 'public', table, commit_timestamp: new Date().toISOString(), type, record, old_record: {}, columns: [], errors: null };
+      channel.ws.send(JSON.stringify([channel.joinRef, String(ref++), channel.topic, 'postgres_changes', { ids, data }]));
+    }
+  };
+
+  const handle = (input: { table: string; method: string; url: string; body: unknown; wantsObject: boolean; prefer: string; campaigns: Row[]; assets: Row[] }): Fulfil | null => {
+    const { table, method, url, body, wantsObject, prefer } = input;
+    const params = new URL(url).searchParams;
+    // Reviews ask for several campaigns' rows at once with `in.(…)`; the base fake only knows `eq.`.
+    if (method === 'GET' && table === 'outbound_assets' && params.get('campaign_id')?.startsWith('in.')) {
+      return { json: filterRows(input.assets, url) };
+    }
+    if (method === 'GET' && table === 'outbound_campaigns' && params.get('id')?.startsWith('in.')) {
+      return { json: filterRows(input.campaigns, url) };
+    }
+    if (!(REVIEW_TABLES as readonly string[]).includes(table)) return null;
+    const rows = tables[table as ReviewTable];
+    if (method === 'HEAD' || (method === 'GET' && prefer.includes('count='))) {
+      const count = filterRows(rows, url).length;
+      return { status: 200, body: method === 'HEAD' ? '' : '[]', headers: {
+        'content-range': count ? `0-${count - 1}/${count}` : '*/0',
+        'content-type': 'application/json',
+        // Cross-origin: the browser hides Content-Range from the app unless it is exposed.
+        'access-control-allow-origin': '*',
+        'access-control-expose-headers': 'content-range',
+      } };
+    }
+    if (method === 'GET') {
+      const found = filterRows(rows, url);
+      return { json: wantsObject ? found[0] ?? null : found };
+    }
+    if (method === 'POST') {
+      const inserted = (Array.isArray(body) ? body : [body]).map((item) => ({
+        id: crypto.randomUUID(),
+        created_at: new Date().toISOString(),
+        ...(table === 'comments' ? { edited_at: null, deleted_at: null } : {}),
+        ...(table === 'notifications' ? { read_at: null } : {}),
+        ...(item as Row),
+      }));
+      rows.push(...inserted);
+      for (const row of inserted) push(table, 'INSERT', row);
+      return { status: 201, json: wantsObject ? inserted[0] : inserted };
+    }
+    if (method === 'PATCH') {
+      const updated = filterRows(rows, url);
+      for (const row of updated) {
+        Object.assign(row, body as Row);
+        push(table, 'UPDATE', row);
+      }
+      return { json: wantsObject ? updated[0] ?? null : updated };
+    }
+    if (method === 'DELETE') {
+      const removed = filterRows(rows, url);
+      for (const row of removed) rows.splice(rows.indexOf(row), 1);
+      return { json: removed };
+    }
+    return null;
+  };
+
+  return { tables, handle, push };
+}
+// --- bulk RPCs ---
+// Team spaces add Trash (deleted_at) and bulk_* RPCs. Library list reads hide trashed rows unless the
+// query filters deleted_at itself (the Trash view asks for `deleted_at=not.is.null`).
+
+type BulkTables = { outbound_campaigns: Row[]; outbound_templates: Row[]; outbound_assets: Row[]; outbound_folders: Row[] };
+
+const entityTables: Record<string, keyof BulkTables> = {
+  campaign: 'outbound_campaigns',
+  template: 'outbound_templates',
+  asset: 'outbound_assets',
+  folder: 'outbound_folders',
+};
+
+/** PostgREST filters the app uses on library tables: eq, in, is null, not.is.null. */
+function bulkSelect(url: string, rows: Row[], wantsObject: boolean) {
+  const params = new URL(url).searchParams;
+  let result = rows;
+  const deleted = params.get('deleted_at');
+  if (deleted === 'not.is.null') result = result.filter((row) => row.deleted_at);
+  else result = result.filter((row) => !row.deleted_at);
+  for (const [column, filter] of params) {
+    if (['select', 'order', 'limit', 'offset', 'deleted_at'].includes(column)) continue;
+    // Seeded rows often leave out columns such as user_id; a filter on a column a row lacks lets it through.
+    if (filter.startsWith('eq.')) result = result.filter((row) => row[column] === undefined || String(row[column]) === filter.slice(3));
+    else if (filter.startsWith('in.(')) {
+      const values = filter.slice(4, -1).split(',').map((value) => value.replace(/^"|"$/g, ''));
+      result = result.filter((row) => row[column] === undefined || values.includes(String(row[column])));
+    } else if (filter === 'is.null') result = result.filter((row) => row[column] == null);
+  }
+  if (params.get('order')?.startsWith('deleted_at')) result = [...result].sort((a, b) => String(b.deleted_at).localeCompare(String(a.deleted_at)));
+  return wantsObject ? result[0] ?? null : result;
+}
+
+function bulkRpc(url: string, body: unknown, tables: BulkTables, failures: Map<string, { code: string; message: string }>) {
+  const fn = new URL(url).pathname.split('/rpc/')[1] ?? '';
+  const args = (body ?? {}) as { entity?: string; ids?: string[]; items?: Array<{ id: string; name: string }>; target_folder?: string | null; target_space?: string | null; patch?: { status?: string; tags_add?: string[]; tags_remove?: string[] } };
+  const table = fn === 'bulk_update_campaigns' ? tables.outbound_campaigns : tables[entityTables[args.entity ?? ''] ?? 'outbound_campaigns'];
+  const ids = args.ids ?? (args.items ?? []).map((item) => item.id);
+  const now = new Date().toISOString();
+  return ids.map((id) => {
+    const forced = failures.get(id);
+    if (forced) return { id, ok: false, error_code: forced.code, message: forced.message };
+    const index = table.findIndex((row) => row.id === id);
+    const row = table[index];
+    if (!row) return { id, ok: false, error_code: 'not_found', message: 'This item no longer exists.' };
+    let message: string | null = null;
+    if (fn === 'bulk_trash') Object.assign(row, { deleted_at: now, deleted_by: userId });
+    else if (fn === 'bulk_restore') Object.assign(row, { deleted_at: null, deleted_by: null });
+    else if (fn === 'bulk_move') Object.assign(row, { folder_id: args.target_folder ?? null }, args.target_space ? { space_id: args.target_space } : {});
+    else if (fn === 'bulk_rename') {
+      const name = args.items?.find((item) => item.id === id)?.name ?? '';
+      if (args.entity === 'asset') row.filename = name;
+      else row.name = name;
+      if (row.config && typeof row.config === 'object') row.config = { ...(row.config as Row), campaignName: name };
+    } else if (fn === 'bulk_update_campaigns') {
+      const tags = new Set([...((row.tags as string[] | undefined) ?? []), ...(args.patch?.tags_add ?? [])]);
+      for (const tag of args.patch?.tags_remove ?? []) tags.delete(tag);
+      row.tags = [...tags];
+      if (args.patch?.status) {
+        const config = (row.config ?? {}) as Row;
+        row.config = { ...config, history: [...((config.history as unknown[]) ?? []), { at: now, kind: args.patch.status, rows: 0 }] };
+      }
+    } else if (fn === 'bulk_purge') {
+      if (!row.deleted_at) return { id, ok: false, error_code: 'validation', message: 'Only items in Trash can be deleted forever.' };
+      table.splice(index, 1);
+      const paths = args.entity === 'asset' ? [row.storage_path] : args.entity === 'campaign' ? tables.outbound_assets.filter((asset) => asset.campaign_id === id).map((asset) => asset.storage_path) : [];
+      // Like the real RPC: rows go, storage objects stay for the client to remove.
+      message = JSON.stringify(paths.filter(Boolean));
+    }
+    if (fn !== 'bulk_purge') row.version = Number(row.version ?? 1) + 1;
+    return { id, ok: true, error_code: null, message };
+  });
+}
+// --- end bulk RPCs ---
+// --- spaces & roles ---
+// Profiles, spaces, memberships, invites, the activity log, the accept_invite / bulk_move RPCs and
+// the invite-member Edge Function. The signed-in user is the Owner unless `role` says otherwise,
+// so older specs (which know nothing about spaces) keep working with no spaces at all.
+
+export type FakeRole = 'owner' | 'team' | 'client_manager' | 'client_viewer';
+
+export type SpacesOptions = {
+  /** Who the signed-in user is (default 'owner'). Client roles get a membership in `clientSpaceId`. */
+  role?: FakeRole;
+  /** Rows for GET /rest/v1/spaces (default none). */
+  spaces?: Array<{ id: string; name: string; kind: 'internal' | 'client'; archived_at?: string | null }>;
+  /** The client user's space (default: the first client space). */
+  clientSpaceId?: string;
+  /** Other people's profiles (the signed-in user's own profile is added). */
+  profiles?: Array<{ user_id: string; email: string; display_name?: string | null; org_role: 'owner' | 'team' | 'client' }>;
+  /** Other people's memberships (the client user's own membership is added). */
+  memberships?: Array<{ space_id: string; user_id: string; role: 'client_manager' | 'client_viewer' }>;
+  invites?: Record<string, unknown>[];
+  activity?: Record<string, unknown>[];
+  /** Signed in, but no profile row (no invite was ever accepted). */
+  noProfile?: boolean;
+  /** What invite-member answers (default `{ ok: true }`). */
+  inviteResult?: { ok: boolean; error?: string };
+};
+
+export const fakeEmail = 'operator@dgk.internal';
+
+/** Keeps rows whose space_id matches a `space_id=eq.` filter, when the request has one. */
+function filterBySpace<T extends Record<string, unknown>>(rows: T[], url: string) {
+  const wanted = new URL(url).searchParams.get('space_id')?.replace(/^eq\./, '');
+  return wanted ? rows.filter((row) => row.space_id === wanted) : rows;
+}
+
+function eqFilter<T extends Record<string, unknown>>(rows: T[], url: string, columns: string[]) {
+  const params = new URL(url).searchParams;
+  return rows.filter((row) => columns.every((column) => {
+    const value = params.get(column);
+    return !value?.startsWith('eq.') || String(row[column]) === value.slice(3);
+  }));
+}
+
+function createSpacesFake(options: SpacesOptions & { reviews?: ReviewTables }, requests: FakeRequest[]) {
+  const role = options.role ?? 'owner';
+  const spaces = [...(options.spaces ?? [])].map((space) => ({ archived_at: null, ...space }));
+  const clientSpace = options.clientSpaceId ?? spaces.find((space) => space.kind === 'client')?.id ?? '';
+  const isClient = role === 'client_manager' || role === 'client_viewer';
+  const ownProfile = { user_id: userId, email: fakeEmail, display_name: 'Operator', org_role: isClient ? 'client' : role };
+  const profiles: Record<string, unknown>[] = [...(options.noProfile ? [] : [ownProfile]), ...(options.profiles ?? [])];
+  const memberships: Record<string, unknown>[] = [
+    ...(isClient ? [{ space_id: clientSpace, user_id: userId, role }] : []),
+    ...(options.memberships ?? []),
+  ];
+  const invites = [...(options.invites ?? [])];
+  const activity = [...(options.activity ?? [])];
+  const functionCalls: Array<{ name: string; body: unknown }> = [];
+
+  const visibleSpaces = () => (isClient ? spaces.filter((space) => memberships.some((member) => member.user_id === userId && member.space_id === space.id)) : spaces);
+
+  function handle(route: Route, request: Request) {
+    const url = request.url();
+    const method = request.method();
+    if (url.includes('/functions/v1/')) {
+      const name = new URL(url).pathname.split('/functions/v1/')[1] ?? '';
+      const body = requestBody(request);
+      functionCalls.push({ name, body });
+      requests.push({ method, table: `functions:${name}`, url, body });
+      const result = options.inviteResult ?? { ok: true };
+      if (name === 'invite-member' && result.ok && body && typeof body === 'object') {
+        const sent = body as Record<string, unknown>;
+        invites.unshift({
+          id: `inv-${invites.length + 1}`,
+          email: sent.email,
+          org_role: sent.org_role,
+          space_id: sent.space_id ?? null,
+          role: sent.role ?? null,
+          invited_by: userId,
+          created_at: new Date().toISOString(),
+          expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+          accepted_at: null,
+          revoked_at: null,
+        });
+      }
+      return route.fulfill({ json: result });
+    }
+    if (!url.includes('/rest/v1/')) return null;
+    const path = new URL(url).pathname.split('/rest/v1/')[1] ?? '';
+    const [table, rpcName] = path.split('/');
+    const body: unknown = requestBody(request);
+    const wantsObject = (request.headers().accept ?? '').includes('vnd.pgrst.object');
+    const reply = (rows: unknown[]) => route.fulfill({ json: wantsObject ? rows[0] ?? null : rows });
+    if (table === 'rpc') {
+      requests.push({ method, table: `rpc:${rpcName}`, url, body });
+      if (rpcName === 'accept_invite') return route.fulfill({ json: null });
+      // bulk_* RPCs are answered by the bulk block against the library tables.
+      return null;
+    }
+    // A spec that seeds review profiles lets the reviews block answer profile reads.
+    if (table === 'profiles' && options.reviews?.profiles) return null;
+    const tables: Record<string, Record<string, unknown>[]> = { profiles, spaces, space_members: memberships, invites, activity_log: activity };
+    if (!(table in tables)) return null;
+    if (method !== 'GET' && method !== 'HEAD') requests.push({ method, table, url, body });
+    const rows = tables[table];
+    if (method === 'GET') {
+      if (table === 'spaces') return reply(eqFilter(visibleSpaces(), url, ['id']));
+      if (table === 'activity_log') {
+        const params = new URL(url).searchParams;
+        const filtered = eqFilter(activity, url, ['space_id', 'actor', 'action']);
+        const offset = Number(params.get('offset') ?? 0);
+        const limit = Number(params.get('limit') ?? filtered.length);
+        return reply(filtered.slice(offset, offset + limit));
+      }
+      return reply(eqFilter(rows, url, ['user_id', 'space_id', 'id']));
+    }
+    if (method === 'POST' && body && typeof body === 'object') {
+      const added = (Array.isArray(body) ? body : [body]).map((row) => (table === 'spaces' ? { id: `space-${spaces.length + 1}`, archived_at: null, ...row } : row));
+      rows.push(...added);
+      return reply(added);
+    }
+    if (method === 'PATCH' && body && typeof body === 'object') {
+      const matched = eqFilter(rows, url, ['user_id', 'space_id', 'id']);
+      for (const row of matched) Object.assign(row, body);
+      return reply(matched);
+    }
+    if (method === 'DELETE') {
+      const matched = eqFilter(rows, url, ['user_id', 'space_id', 'id']);
+      for (const row of matched) rows.splice(rows.indexOf(row), 1);
+      return reply(matched);
+    }
+    return reply([]);
+  }
+
+  return { handle, state: { functionCalls, invites, memberships, profiles, spacesRows: spaces } };
 }

@@ -367,7 +367,7 @@ export const guideContent: Record<GuideKey, GuideEntry> = {
       },
       {
         title: 'Organise',
-        body: 'From the three dots: Duplicate a campaign, Set client…, Rename it or Delete it. A delete can be undone from the message that appears.',
+        body: 'From the three dots: Duplicate a campaign, Set client…, Rename it or Delete it. Deleted items wait in Trash for 30 days; Undo in the message brings one straight back. Tick several rows to move, rename, tag, download or delete them together.',
         labels: ['Duplicate', 'Set client…', 'Rename', 'Delete', 'Undo'],
       },
     ],

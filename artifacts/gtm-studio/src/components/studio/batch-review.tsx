@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronLeft, ChevronRight, CircleX, Download, RotateCcw, Sparkles, Trash2, TriangleAlert } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { planZipParts, zipItemsFor } from '@/studio/batch-chunks';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { GeneratedAsset } from '@/studio/types';
 import { formatBytes } from './shared';
+import { CampaignSignoff } from './campaign-signoff';
+import { CommentThread } from './comment-thread';
+import { ReviewControls } from './review-controls';
+import { refreshAssets, resolveAssetId, useCampaignReview } from './use-campaign-review';
 
 function StatusBadge({ asset }: { asset: GeneratedAsset }) {
   if (asset.status === 'failed') {
@@ -48,8 +52,11 @@ export function BatchReview({
   onRetry,
   onDelete,
   zipping = false,
+  campaignId,
 }: {
   zipping?: boolean;
+  /** Saved campaign id: turns on approvals, sign-off and comments (needs the cloud). */
+  campaignId?: string;
   assets: GeneratedAsset[];
   animatedExport: boolean;
   onToggle: (id: string, selected: boolean) => void;
@@ -77,6 +84,16 @@ export function BatchReview({
     setPage(Math.max(0, Math.min(pages - 1, next)));
     document.getElementById('review-heading')?.scrollIntoView({ block: 'start' });
   };
+  const review = useCampaignReview(campaignId);
+  const reviewing = Boolean(campaignId) && review.status === 'ready';
+  // Files uploaded in this session keep their local id; re-read the campaign's rows to match them.
+  const uploadedCount = assets.filter((asset) => asset.publicUrl).length;
+  const matchedFor = useRef(-1);
+  useEffect(() => {
+    if (!campaignId || review.status !== 'ready' || matchedFor.current === uploadedCount) return;
+    matchedFor.current = uploadedCount;
+    if (assets.some((asset) => asset.publicUrl && !resolveAssetId(review, asset))) void refreshAssets(campaignId);
+  }, [campaignId, review, uploadedCount, assets]);
   const downloadLabel = zipping ? 'Preparing ZIP…' : `Download selected (${selected.length.toLocaleString('en-US')})`;
   return (
     <section className="panel animate-rise p-6" aria-labelledby="review-heading">
@@ -97,6 +114,12 @@ export function BatchReview({
           </button>
         </div>
       </div>
+      {reviewing && campaignId && (
+        <div className="mb-4 flex flex-col gap-2">
+          <CampaignSignoff campaignId={campaignId} />
+          <div className="flex justify-end"><CommentThread campaignId={campaignId} /></div>
+        </div>
+      )}
       {zipParts > 1 && (
         <p className="helper mb-4" data-testid="zip-parts-note">This selection downloads as {zipParts} ZIP parts. Each part has its own manifest and CSV slice; the last part also has the full list CSV.</p>
       )}
@@ -106,7 +129,11 @@ export function BatchReview({
           const checkboxId = `select-${asset.id}`;
           const failedAsset = asset.status === 'failed';
           return (
-            <li key={asset.id} className={`review-card ${asset.selected ? 'is-selected' : ''}`}>
+            <li
+              key={asset.id}
+              className={`review-card ${asset.selected ? 'is-selected' : ''}`}
+              {...(reviewing ? { 'data-review-tile': '', tabIndex: 0, 'aria-keyshortcuts': 'A R', 'aria-label': `Row ${asset.row}, ${asset.filename}. Press A to approve, R to request changes.` } : {})}
+            >
               <div className="review-image">
                 {asset.url ? (
                   <img src={asset.url} alt={`Generated asset for row ${asset.row}`} loading="lazy" decoding="async" width={360} height={450} />
@@ -140,6 +167,12 @@ export function BatchReview({
                       <RotateCcw size={14} aria-hidden /> Retry
                     </button>
                   </p>
+                )}
+                {reviewing && campaignId && !failedAsset && (
+                  <>
+                    <ReviewControls campaignId={campaignId} asset={asset} />
+                    <CommentThread campaignId={campaignId} asset={asset} />
+                  </>
                 )}
                 {asset.note && <p className="text-xs text-muted-foreground">{asset.note}</p>}
                 {asset.still && <p className="mono truncate text-xs text-muted-foreground" title={asset.still.publicUrl ?? asset.still.filename}>+ {asset.still.filename}</p>}
