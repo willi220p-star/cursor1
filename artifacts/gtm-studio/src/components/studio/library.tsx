@@ -599,7 +599,7 @@ export function Library({
   };
 
   return (
-    <section aria-labelledby="library-heading" className="flex flex-col gap-5 outline-none" tabIndex={-1} onKeyDown={onLibraryKey}>
+    <section aria-labelledby="library-heading" className={`flex flex-col gap-5 outline-none ${anySelected ? 'pb-4 sm:pb-0' : ''}`} tabIndex={-1} onKeyDown={onLibraryKey}>
       <div className="library-head">
         <h2 id="library-heading" className="section-title">Library</h2>
         <label className="search-field">
