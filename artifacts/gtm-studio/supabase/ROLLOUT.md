@@ -1,3 +1,20 @@
+# Live rollout status (project hvvtmhlxdmeyozyirpqo, "DGK GTM Personalisation")
+
+**Done by Claude on 2026-10-17:** backup (`backup_before_spaces`), migrations 1 to 5 applied in pieces (the
+tool times out on long statements and on anything with DROP/DELETE), the checks in `rollout/3-check.sql`
+all pass (19 campaigns, 120 files, 121 stored images, 1 Owner, everything filed in "Internal (DGK)"), and the
+`invite-member` Edge Function is deployed.
+
+**Left for you (2 minutes), because they need a human to confirm:**
+1. SQL editor: paste and run `rollout/4-finish.sql` (removes the four old owner-only rules, adds "Delete
+   forever", keeps a person's work when their login is removed).
+2. Dashboard, Edge Functions, Secrets: add `APP_URL` = `https://willi220p-star.github.io/cursor1/`
+   (invites need it). Optional: Authentication, Passwords, turn on leaked-password protection.
+3. Skipped on purpose: the 30-day auto-purge (needs pg_cron, pg_net and a shared secret). Trash simply keeps
+   items until you empty it.
+
+---
+
 # Putting team spaces on the live database
 
 Do these in order. Nothing here deletes your data, and the order matters: **database first, then the app**.

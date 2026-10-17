@@ -89,6 +89,7 @@ run sqltest_main $(new_migrations)
 run sqltest_main $(new_migrations)   # re-run: must be idempotent
 run sqltest_main "$APP_DIR/supabase/rollout/2-apply-all.sql"   # the one-paste file the rollout uses
 run sqltest_main "$APP_DIR/supabase/rollout/3-check.sql"
+run sqltest_main "$APP_DIR/supabase/rollout/4-finish.sql"   # the confirmation-needing statements, run by hand live
 run sqltest_main "$TESTS/_helpers.sql"
 for f in "$TESTS"/[2-8]*.sql; do run sqltest_main "$f"; done
 run sqltest_main $(rollbacks_reversed)
