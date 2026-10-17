@@ -192,7 +192,7 @@ export function BatchReview({
       <PageControls page={current} pages={pages} total={assets.length} onPage={goTo} />
       <div className="selection-bar" role="toolbar" aria-label="Selection">
         <span className="text-sm font-medium">{selected.length.toLocaleString('en-US')} selected of {(assets.length - failed).toLocaleString('en-US')}</span>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button type="button" className="btn btn-ghost" onClick={onSelectAll}>Select all</button>
           <button type="button" className="btn btn-ghost" onClick={onClear}>Clear</button>
           <button type="button" className="btn btn-quiet" onClick={onDownloadSelected} disabled={!selected.length || zipping}><Download size={16} aria-hidden /> {zipping ? 'Preparing…' : `Download (${selected.length.toLocaleString('en-US')})`}</button>

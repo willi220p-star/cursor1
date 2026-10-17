@@ -70,20 +70,20 @@ export function ActivityPage() {
         {staff ? 'Everything that changed, newest first.' : 'What changed in your space, newest first.'}
       </p>
 
-      <div className="mt-8 flex flex-wrap gap-3" role="group" aria-label="Filter activity">
+      <div className="mt-8 grid grid-cols-2 gap-3 sm:flex sm:flex-wrap" role="group" aria-label="Filter activity">
         {staff && (
-          <select className="field" aria-label="Filter by space" value={spaceId} onChange={(event) => resetPage(setSpaceId)(event.target.value)}>
+          <select className="field col-span-2 min-w-0 sm:col-span-1 sm:w-auto! sm:max-w-[280px]!" aria-label="Filter by space" value={spaceId} onChange={(event) => resetPage(setSpaceId)(event.target.value)}>
             <option value="">All spaces</option>
             {sortSpaces(access.spaces).map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
           </select>
         )}
         {profiles.length > 1 && (
-          <select className="field" aria-label="Filter by person" value={actor} onChange={(event) => resetPage(setActor)(event.target.value)}>
+          <select className="field min-w-0 sm:w-auto! sm:max-w-[240px]!" aria-label="Filter by person" value={actor} onChange={(event) => resetPage(setActor)(event.target.value)}>
             <option value="">Everyone</option>
             {profiles.map((profile) => <option key={profile.user_id} value={profile.user_id}>{profile.display_name || profile.email}</option>)}
           </select>
         )}
-        <select className="field" aria-label="Filter by action" value={action} onChange={(event) => resetPage(setAction)(event.target.value as ActivityAction | '')}>
+        <select className="field min-w-0 sm:w-auto!" aria-label="Filter by action" value={action} onChange={(event) => resetPage(setAction)(event.target.value as ActivityAction | '')}>
           <option value="">Every action</option>
           {ACTIONS.map((item) => <option key={item} value={item}>{activityActionLabels[item]}</option>)}
         </select>
@@ -103,7 +103,7 @@ export function ActivityPage() {
           {rows.map((entry) => {
             const where = staff && !spaceId ? names.space(entry.space_id) : '';
             return (
-              <li key={entry.id} className="flex flex-wrap items-baseline gap-x-2 px-5 py-3 text-sm" data-action={entry.action}>
+              <li key={entry.id} className="flex min-w-0 flex-wrap items-baseline gap-x-2 break-words px-4 py-3 text-sm sm:px-5" data-action={entry.action}>
                 <span className="font-medium">{describeActivity(entry, names)}</span>
                 <span className="text-muted-foreground">
                   {where ? `${where} · ` : ''}
@@ -123,7 +123,7 @@ export function ActivityPage() {
       )}
 
       {(page > 0 || hasMore) && (
-        <nav className="mt-4 flex items-center justify-between" aria-label="Activity pages">
+        <nav className="mt-4 flex items-center justify-between pb-[env(safe-area-inset-bottom)]" aria-label="Activity pages">
           <button type="button" className="btn btn-quiet btn-sm" disabled={page === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>
             <ChevronLeft size={16} aria-hidden /> Newer
           </button>

@@ -106,13 +106,13 @@ export function BulkBar({
       role="toolbar"
       aria-label="Bulk actions"
       data-bulk-bar
-      className="sticky bottom-3 z-30 flex flex-wrap items-center gap-2 rounded-[18px] border border-border bg-popover px-3 py-2 shadow-[var(--shadow-overlay)]"
+      className="bulk-bar sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 flex w-full max-w-full items-center gap-2 overflow-x-auto overscroll-x-contain rounded-[18px] border border-border bg-popover px-3 py-2 shadow-[var(--shadow-overlay)] [scrollbar-width:none] sm:mx-auto sm:max-w-[720px] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden"
     >
-      <span className="mr-1 text-sm font-semibold" aria-live="polite" data-bulk-count>{count} selected</span>
-      <button type="button" className="btn btn-ghost btn-sm min-h-11 sm:min-h-9" onClick={onClear} aria-label="Clear selection">
+      <span className="mr-1 flex-none whitespace-nowrap text-sm font-semibold" aria-live="polite" data-bulk-count>{count} selected</span>
+      <button type="button" className="btn btn-ghost btn-sm min-h-11 flex-none sm:min-h-9" onClick={onClear} aria-label="Clear selection">
         <X size={15} aria-hidden /> Clear
       </button>
-      <span className="mx-1 hidden h-6 w-px bg-border sm:block" aria-hidden />
+      <span className="mx-1 h-6 w-px flex-none bg-border" aria-hidden />
 
       <Action reason={blockedReason(items, moveAction, moveBlocked)}>
         {(disabled) => (
@@ -231,7 +231,7 @@ export function BulkBar({
 /** Wraps an action so a disabled button still explains itself on hover (disabled buttons get no hover events). */
 function Action({ reason, children }: { reason: string | null; children: (disabled: boolean) => ReactNode }) {
   return (
-    <span className="inline-flex" title={reason ?? undefined} data-blocked={reason ? 'true' : undefined}>
+    <span className="inline-flex flex-none" title={reason ?? undefined} data-blocked={reason ? 'true' : undefined}>
       {children(Boolean(reason))}
     </span>
   );
