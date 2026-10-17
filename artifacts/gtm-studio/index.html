@@ -24,6 +24,16 @@
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
         document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
       })();
+      // Invite and password-reset links arrive with a token in the address. Note it before the sign-in library
+      // clears it, so the app can ask for a password; note failed links so the sign-in page can explain.
+      (function () {
+        try {
+          var hash = window.location.hash || '';
+          if (/[#&]type=(invite|recovery)(&|$)/.test(hash)) sessionStorage.setItem('gtm-set-password', '1');
+          var code = /[#&]error_code=([^&]+)/.exec(hash);
+          if (code) sessionStorage.setItem('gtm-link-error', decodeURIComponent(code[1]));
+        } catch (e) {}
+      })();
     </script>
   </head>
   <body>
