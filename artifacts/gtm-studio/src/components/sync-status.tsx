@@ -45,13 +45,14 @@ export function SyncStatusPill() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-9 flex-none items-center gap-1.5 whitespace-nowrap rounded-full px-3 text-[13px] font-semibold"
+          className="inline-flex h-11 w-11 flex-none items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-0 text-[13px] font-semibold sm:h-9 sm:w-auto sm:px-3"
           style={{ background: `color-mix(in srgb, ${tone} 13%, transparent)`, color: tone }}
           aria-live="polite"
           data-testid="sync-status-pill"
         >
           <Icon size={14} aria-hidden className={status.running ? 'animate-spin' : undefined} />
-          {label}
+          {/* On phones the nav only has room for the icon; the words stay for screen readers. */}
+          <span className="sr-only sm:not-sr-only">{label}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-[min(340px,calc(100vw-24px))] rounded-[12px] border-border bg-card p-0 shadow-[var(--shadow-overlay)]">

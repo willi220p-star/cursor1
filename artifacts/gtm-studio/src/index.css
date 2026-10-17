@@ -254,7 +254,7 @@
 .btn-icon { width: 40px; padding: 0; }
 .btn-lg { height: 44px; }
 .btn-sm { height: 40px; padding: 0 12px; }
-@media (pointer: coarse) {
+@media (pointer: coarse), (max-width: 639px) {
   .btn, .btn-sm { height: 44px; }
   .btn-icon { width: 44px; }
 }
@@ -273,6 +273,7 @@
   outline: none;
   transition: border-color var(--dur-fast) var(--ease-standard);
 }
+@media (max-width: 639px) { .field { min-height: 44px; } }
 .field::placeholder { color: var(--muted-foreground); opacity: .8; }
 .field:hover { border-color: var(--muted-foreground); }
 .field:focus-visible { border-color: var(--ring); outline: 3px solid var(--accent); outline-offset: 0; }
@@ -310,6 +311,9 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .topnav-inner { display: flex; align-items: center; gap: 12px; min-height: 60px; max-width: 1440px; margin: 0 auto; padding: 0 16px; }
 @media (min-width: 768px) { .topnav-inner { padding: 0 32px; } }
 .brand-lockup { display: inline-flex; align-items: baseline; gap: 10px; color: var(--foreground); text-decoration: none; white-space: nowrap; }
+@media (max-width: 639px) { .brand-lockup { align-items: center; min-height: 44px; } }
+/* The sync pill needs the room on phones; the DGK mark still names the app. */
+@media (max-width: 479px) { .topnav:has([data-testid='sync-status-pill']) .brand-name { display: none; } }
 .brand-lockup .brand-mark { font-family: var(--app-font-display); font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
 .brand-lockup .brand-name { color: var(--muted-foreground); font-size: 14px; }
 .studio-tabs { display: none; flex: 1 1 auto; justify-content: center; gap: 2px; min-width: 0; }
@@ -351,9 +355,9 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .nav-search kbd { padding: 1px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); font: inherit; font-size: 12px; }
 .round-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 999px; background: var(--fill); color: var(--foreground); }
 .round-btn:hover { background: var(--fill-strong); }
-@media (pointer: coarse) { .round-btn, .nav-search { width: 44px; height: 44px; } .nav-search { width: auto; } }
+@media (pointer: coarse), (max-width: 639px) { .round-btn, .nav-search { width: 44px; height: 44px; } .nav-search { width: auto; } }
 .avatar-btn { display: inline-grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 999px; background: var(--primary); color: var(--primary-foreground); font-size: 13px; font-weight: 600; }
-@media (pointer: coarse) { .avatar-btn { width: 44px; height: 44px; } }
+@media (pointer: coarse), (max-width: 639px) { .avatar-btn { width: 44px; height: 44px; } }
 .mobile-menu-btn { display: inline-grid; }
 @media (min-width: 1100px) { .mobile-menu-btn { display: none; } }
 .sheet-nav { display: flex; flex-direction: column; gap: 4px; }
@@ -477,14 +481,14 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .segmented button[aria-pressed='true'], .segmented button[aria-selected='true'] { background: var(--card); box-shadow: 0 1px 2px rgb(0 0 0 / .14); }
 :root[data-theme='dark'] .segmented button[aria-pressed='true'], :root[data-theme='dark'] .segmented button[aria-selected='true'] { background: #3a342c; }
 .segmented .count { color: var(--muted-foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
-@media (pointer: coarse) { .segmented button { min-height: 44px; } }
+@media (pointer: coarse), (max-width: 639px) { .segmented button { min-height: 44px; } }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .chip { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 14px; border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--foreground); font-size: 13px; font-weight: 500; }
 .chip:hover { background: var(--fill); }
 .chip[aria-pressed='true'] { border-color: var(--foreground); background: var(--foreground); color: var(--background); font-weight: 600; }
 .chip.is-dashed { border-style: dashed; color: var(--muted-foreground); }
 .chip .count { opacity: .7; font-variant-numeric: tabular-nums; }
-@media (pointer: coarse) { .chip { min-height: 44px; } }
+@media (pointer: coarse), (max-width: 639px) { .chip { min-height: 44px; } }
 .group-list { margin: 0; padding: 0; list-style: none; overflow: hidden; border: 1px solid var(--border); border-radius: 20px; background: var(--card); }
 .group-row { display: flex; align-items: center; gap: 14px; padding: 12px 16px; border-top: 1px solid var(--border); cursor: pointer; transition: background-color var(--dur-fast) var(--ease-standard); }
 .group-row:first-child { border-top: 0; }
@@ -1126,7 +1130,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .stage-paused .meme-live-layer, .stage-paused .meme-photo-layer, .stage-paused .meme-fire-veil { animation-play-state: paused; }
 
 /* Batch review -------------------------------------------------------------------------- */
-.review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 16px; }
 .review-card { position: relative; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); transition: border-color var(--dur-fast) var(--ease-standard); }
 .review-card:hover { border-color: var(--input); }
 .review-card.is-selected { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
@@ -1143,7 +1147,7 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .review-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin: 0 0 16px; }
 .review-pager + .selection-bar, .review-grid + .review-pager { margin: 16px 0 0; }
 .review-page-select { width: auto; min-width: 128px; height: 40px; }
-.selection-bar { position: sticky; bottom: 16px; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-overlay); }
+.selection-bar { position: sticky; bottom: max(16px, env(safe-area-inset-bottom)); z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--card); box-shadow: var(--shadow-overlay); }
 
 /* Login ------------------------------------------------------------------------------------ */
 .login-shell { min-height: 100dvh; display: grid; padding: 16px; background: var(--background); }

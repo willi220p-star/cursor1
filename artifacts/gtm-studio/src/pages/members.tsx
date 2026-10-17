@@ -65,6 +65,53 @@ async function runAction(label: string, fn: () => Promise<unknown>, onError: (me
   }
 }
 
+type InviteActRunner = (label: string, fn: () => Promise<unknown>, success: string) => Promise<boolean>;
+
+/** The three-dots menu for one person; shared by the phone cards and the desktop table. */
+function PersonActions({ person, manageable, onEdit, onRemove, onInviteAction }: {
+  person: PersonRow;
+  manageable: boolean;
+  onEdit: (person: PersonRow) => void;
+  onRemove: (person: PersonRow) => void;
+  onInviteAction: InviteActRunner;
+}) {
+  if (!manageable) return null;
+  const invite = person.invite;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" className="btn btn-quiet btn-icon flex-none" aria-label={`Actions for ${person.email}`}><MoreHorizontal size={18} aria-hidden /></button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-52 border-border bg-popover">
+        {invite ? (
+          <>
+            <DropdownMenuItem className="min-h-11" onSelect={() => void onInviteAction('Resend invite', () => resendInvite(invite), `Invite sent again to ${person.email}`)}>
+              <Send aria-hidden /> Resend invite
+            </DropdownMenuItem>
+            <DropdownMenuItem className="min-h-11 text-destructive" onSelect={() => void onInviteAction('Revoke invite', () => revokeInvite(invite.id), `Invite for ${person.email} revoked`)}>
+              Revoke invite
+            </DropdownMenuItem>
+          </>
+        ) : (
+          <>
+            <DropdownMenuItem className="min-h-11" onSelect={() => onEdit(person)}>
+              <Pencil aria-hidden /> Change role or space…
+            </DropdownMenuItem>
+            {person.status !== 'No access' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem className="min-h-11 text-destructive" onSelect={() => onRemove(person)}>
+                  Remove access…
+                </DropdownMenuItem>
+              </>
+            )}
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function MembersPage({ userId }: { userId: string }) {
   const access = useAccess();
   const { orgRole, spaces, refresh: refreshAccess } = access;
@@ -113,15 +160,15 @@ export function MembersPage({ userId }: { userId: string }) {
           <h1 className="display text-[clamp(36px,4.4vw,52px)] font-semibold leading-[1.05]">Members</h1>
           <p className="mt-3 max-w-[60ch] text-base text-muted-foreground">Who can sign in, what they can do, and which client space they see.</p>
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => { setActionError(null); setInviteOpen(true); }}>
+        <button type="button" className="btn btn-primary w-full sm:w-auto" onClick={() => { setActionError(null); setInviteOpen(true); }}>
           <UserPlus size={16} aria-hidden /> Invite someone
         </button>
       </div>
 
       <Tabs defaultValue="people" className="mt-8">
-        <TabsList>
-          <TabsTrigger value="people">People</TabsTrigger>
-          <TabsTrigger value="spaces">Spaces</TabsTrigger>
+        <TabsList className="h-12 sm:h-10">
+          <TabsTrigger value="people" className="h-full px-5">People</TabsTrigger>
+          <TabsTrigger value="spaces" className="h-full px-5">Spaces</TabsTrigger>
         </TabsList>
 
         <TabsContent value="people" className="mt-6">
@@ -135,7 +182,30 @@ export function MembersPage({ userId }: { userId: string }) {
           {profiles === null ? (
             <p className="text-sm text-muted-foreground" role="status">Loading members…</p>
           ) : (
-            <div className="panel overflow-x-auto p-0">
+            <>
+            <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:hidden" aria-label="People list">
+              {people.map((person) => {
+                const manageable = canManagePerson(viewer, person);
+                const isSelf = person.profile?.user_id === userId;
+                return (
+                  <li key={`card-${person.key}`} className="panel flex items-start gap-3 p-4" data-person-card={person.email}>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{person.name}{isSelf && <span className="ml-2 text-xs font-normal text-muted-foreground">(you)</span>}</p>
+                      <p className="truncate text-sm text-muted-foreground" title={person.email}>{person.email}</p>
+                      <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                        <span>{personRoleLabels[person.role]}</span>
+                        <span className="text-muted-foreground" aria-hidden>·</span>
+                        <span className="min-w-0 truncate">{person.role === 'owner' || person.role === 'team' ? 'All spaces' : nameOf(person.spaceId) || '—'}</span>
+                        <span className="status-pill" data-status={person.status.toLowerCase().replace(' ', '-')}>{person.status}</span>
+                      </p>
+                    </div>
+                    <PersonActions person={person} manageable={manageable} onEdit={(row) => { setActionError(null); setEditing(row); }} onRemove={setRemoving} onInviteAction={act} />
+                  </li>
+                );
+              })}
+              {!people.length && <li className="panel p-6 text-center text-sm text-muted-foreground">No members yet. Invite someone to get started.</li>}
+            </ul>
+            <div className="panel hidden overflow-x-auto p-0 lg:block">
               <table className="w-full min-w-[720px] text-left text-sm" aria-label="People">
                 <thead className="text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
@@ -159,42 +229,7 @@ export function MembersPage({ userId }: { userId: string }) {
                         <td className="px-4 py-3">{person.role === 'owner' || person.role === 'team' ? 'All spaces' : nameOf(person.spaceId) || '—'}</td>
                         <td className="px-4 py-3"><span className="status-pill" data-status={person.status.toLowerCase().replace(' ', '-')}>{person.status}</span></td>
                         <td className="px-4 py-3 text-right">
-                          {person.invite ? (
-                            manageable && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <button type="button" className="btn btn-quiet btn-icon" aria-label={`Actions for ${person.email}`}><MoreHorizontal size={18} aria-hidden /></button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="min-w-52 border-border bg-popover">
-                                  <DropdownMenuItem className="min-h-11" onSelect={() => void act('Resend invite', () => resendInvite(person.invite!), `Invite sent again to ${person.email}`)}>
-                                    <Send aria-hidden /> Resend invite
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem className="min-h-11 text-destructive" onSelect={() => void act('Revoke invite', () => revokeInvite(person.invite!.id), `Invite for ${person.email} revoked`)}>
-                                    Revoke invite
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )
-                          ) : manageable && (
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <button type="button" className="btn btn-quiet btn-icon" aria-label={`Actions for ${person.email}`}><MoreHorizontal size={18} aria-hidden /></button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="min-w-52 border-border bg-popover">
-                                <DropdownMenuItem className="min-h-11" onSelect={() => { setActionError(null); setEditing(person); }}>
-                                  <Pencil aria-hidden /> Change role or space…
-                                </DropdownMenuItem>
-                                {person.status !== 'No access' && (
-                                  <>
-                                    <DropdownMenuSeparator />
-                                    <DropdownMenuItem className="min-h-11 text-destructive" onSelect={() => setRemoving(person)}>
-                                      Remove access…
-                                    </DropdownMenuItem>
-                                  </>
-                                )}
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          )}
+                          <PersonActions person={person} manageable={manageable} onEdit={(row) => { setActionError(null); setEditing(row); }} onRemove={setRemoving} onInviteAction={act} />
                         </td>
                       </tr>
                     );
@@ -205,6 +240,7 @@ export function MembersPage({ userId }: { userId: string }) {
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </TabsContent>
 
