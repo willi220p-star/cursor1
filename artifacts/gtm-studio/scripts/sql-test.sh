@@ -64,10 +64,17 @@ run() { # run <db> <file>...
     psql -X -q -v ON_ERROR_STOP=1 -d "$db" -f "$f" >>"$LOG" 2>&1
   done
 }
+# The one-paste rollout file must be exactly the migrations in order, or it is out of date.
+rollout_fresh() {
+  local want; want="$(for f in $(new_migrations); do echo "-- ===== $(basename "$f") ====="; cat "$f"; echo; done)"
+  local have; have="$(sed '1,/^$/d' "$APP_DIR/supabase/rollout/2-apply-all.sql")"
+  [ "$want" = "$have" ] || { echo "supabase/rollout/2-apply-all.sql is out of date: run scripts/build-rollout.sh" >&2; exit 1; }
+}
 old_migrations() { ls "$MIGRATIONS"/*.sql | sort | grep -v "/$NEW_PREFIX"; }
 new_migrations() { ls "$MIGRATIONS"/"$NEW_PREFIX"*.sql | sort; }
 rollbacks_reversed() { ls "$ROLLBACKS"/"$NEW_PREFIX"*.down.sql | sort -r; }
 
+rollout_fresh
 : >"$LOG"
 for db in sqltest_main sqltest_empty; do
   psql -X -q -d postgres -c "drop database if exists $db" -c "create database $db" >>"$LOG" 2>&1
@@ -77,8 +84,11 @@ echo "Main database: legacy data, migrations, tests, rollbacks"
 run sqltest_main "$TESTS/00_stub.sql"
 run sqltest_main $(old_migrations)
 run sqltest_main "$TESTS/10_seed_legacy.sql"
+run sqltest_main "$APP_DIR/supabase/rollout/1-backup.sql"
 run sqltest_main $(new_migrations)
 run sqltest_main $(new_migrations)   # re-run: must be idempotent
+run sqltest_main "$APP_DIR/supabase/rollout/2-apply-all.sql"   # the one-paste file the rollout uses
+run sqltest_main "$APP_DIR/supabase/rollout/3-check.sql"
 run sqltest_main "$TESTS/_helpers.sql"
 for f in "$TESTS"/[2-8]*.sql; do run sqltest_main "$f"; done
 run sqltest_main $(rollbacks_reversed)
