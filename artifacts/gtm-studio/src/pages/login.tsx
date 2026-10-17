@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { CircleAlert, Eye, EyeOff, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { signInWithEmail } from '@/studio/auth';
+import { linkErrorMessage, sendPasswordReset, signInWithEmail, takeLinkError } from '@/studio/auth';
 import { supabaseConfigured } from '@/studio/cloud';
 import { ThemeButton } from '@/app/shell';
 import { publicAssetUrl } from '@/lib/public-url';
@@ -27,8 +27,27 @@ export function LoginPage({ bootError }: { bootError?: string | null }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState(bootError ? friendlyAuthError(bootError) : '');
+  const [error, setError] = useState(() => {
+    const linkError = takeLinkError();
+    if (linkError) return linkErrorMessage(linkError);
+    return bootError ? friendlyAuthError(bootError) : '';
+  });
+  const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+
+  const onForgot = async () => {
+    setError('');
+    setNotice('');
+    if (!email.trim()) {
+      setError('Type your work email above first, then choose “Forgot password?”.');
+      return;
+    }
+    setBusy(true);
+    const result = await sendPasswordReset(email.trim());
+    setBusy(false);
+    if (result.error) setError(result.error);
+    else setNotice('If that email has an account, a link to choose a password is on its way. Open it on this device.');
+  };
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -100,6 +119,10 @@ export function LoginPage({ bootError }: { bootError?: string | null }) {
                     {showPassword ? <EyeOff size={18} aria-hidden /> : <Eye size={18} aria-hidden />}
                   </button>
                 </div>
+                <button type="button" className="mt-1 self-start text-sm font-medium text-primary underline-offset-4 hover:underline" onClick={() => void onForgot()} disabled={disabled}>
+                  Forgot password?
+                </button>
+                {notice && <p role="status" className="mt-2 text-sm text-muted-foreground">{notice}</p>}
                 {error && (
                   <Alert id="login-error" variant="destructive" className="mt-3 border-destructive/40 bg-destructive/5">
                     <CircleAlert size={16} aria-hidden />
@@ -113,7 +136,7 @@ export function LoginPage({ bootError }: { bootError?: string | null }) {
               </button>
             </form>
             <p className="mt-6 text-sm leading-relaxed text-muted-foreground">
-              Invite only. Ask an admin to add you in Supabase Auth. Prospect lists stay in this browser until you save a campaign.
+              Invite only. Ask DGK to send you an invite. Prospect lists stay in this browser until you save a campaign.
             </p>
           </div>
         </div>

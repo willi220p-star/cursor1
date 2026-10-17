@@ -18,7 +18,8 @@ import { LoginPage } from '@/pages/login';
 import { DeskPage } from '@/pages/desk';
 import { Shell } from '@/app/shell';
 import { useTheme } from '@/lib/theme';
-import { getCurrentSession, onAuthChange } from '@/studio/auth';
+import { clearPasswordSetup, getCurrentSession, needsPasswordSetup, onAuthChange } from '@/studio/auth';
+import { SetPasswordPage } from '@/pages/set-password';
 import { AccessProvider, canSeeActivity, canUseStudios, useAccess } from '@/studio/access-context';
 
 // The studios, carousel and settings load on first visit so the Desk and sign-in paint fast.
@@ -107,6 +108,8 @@ function SignedInRoutes({ user }: { user: User }) {
 function Router() {
   const [user, setUser] = useState<User | null | undefined>(undefined);
   const [bootError, setBootError] = useState<string | null>(null);
+  // Set when the person arrived through an invite or password-reset link: they pick a password first.
+  const [choosePassword, setChoosePassword] = useState(needsPasswordSetup);
 
   useEffect(() => {
     getCurrentSession().then(({ data, error }) => {
@@ -118,6 +121,17 @@ function Router() {
 
   if (user === undefined) return <BootScreen />;
   if (!user) return <LoginPage bootError={bootError} />;
+  if (choosePassword) {
+    return (
+      <SetPasswordPage
+        email={user.email}
+        onDone={() => {
+          clearPasswordSetup();
+          setChoosePassword(false);
+        }}
+      />
+    );
+  }
 
   return (
     <Switch>

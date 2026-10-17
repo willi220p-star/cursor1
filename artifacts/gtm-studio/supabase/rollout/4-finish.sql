@@ -104,6 +104,6 @@ end
 $$;
 
 -- Check: all three should be true.
-select (select count(*) from pg_policies where schemaname = 'public' and policyname like '%owners manage%') = 0 as old_rules_gone,
+select (select count(*) from pg_policies where schemaname = 'public' and policyname in ('campaign owners manage campaigns', 'asset owners manage assets', 'folder owners manage folders', 'template owners manage templates')) = 0 as old_rules_gone,
        exists (select 1 from pg_proc where proname = 'bulk_purge') as delete_forever_ready,
        (select is_nullable = 'YES' from information_schema.columns where table_schema = 'public' and table_name = 'outbound_campaigns' and column_name = 'user_id') as work_kept_when_login_removed;
