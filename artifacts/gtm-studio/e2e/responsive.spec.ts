@@ -103,7 +103,7 @@ async function expectTappable(page: Page, locators: Locator[], phone: boolean) {
     await expect(locator.first()).toBeVisible();
     const box = await tapBox(locator.first());
     const label = await locator.first().evaluate((node) => node.getAttribute('aria-label') ?? (node as HTMLElement).innerText ?? node.tagName);
-    if (phone) expect(box.height, `${label.trim()} is ${Math.round(box.height)}px high`).toBeGreaterThanOrEqual(MIN_TAP);
+    if (phone) expect(box.height, `${label.trim()} is ${Math.round(box.height)}px high`).toBeGreaterThanOrEqual(MIN_TAP - 0.5); // half a pixel of slack for sub-pixel layout
     expect(box.x, `${label.trim()} starts off screen`).toBeGreaterThanOrEqual(-1);
     // Rows inside a scrolling strip are allowed past the edge; everything else must fit.
     const strip = await locator.first().evaluate((node) => Boolean(node.closest('[data-bulk-bar], .segmented')));
