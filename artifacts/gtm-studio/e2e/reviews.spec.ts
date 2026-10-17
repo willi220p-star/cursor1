@@ -174,3 +174,27 @@ test('Bell shows unread from a seeded notification and Mark all read clears it',
   await expect(page.getByTestId('notification-count')).toHaveCount(0);
   await expect.poll(() => fake.reviewTables!.notifications.find((row) => row.id === 'n3')?.read_at).toBeTruthy();
 });
+
+test('A Client Viewer opens a campaign from the Desk on the review page and approves an image', async ({ page, context }) => {
+  const errors = collectErrors(page);
+  const campaign = campaignRow(CAMPAIGN, 'Acme Q4', { space_id: SPACE });
+  const assets = [assetRow('a-row-2', 2), assetRow('a-row-3', 3)];
+  const fake = await fakeSupabase(context, {
+    role: 'client_viewer',
+    spaces: [{ id: SPACE, name: 'Acme', kind: 'client' }],
+    clientSpaceId: SPACE,
+    campaigns: [campaign],
+    assets,
+    reviews: { profiles: [{ ...profile, org_role: 'client' }] },
+  });
+  await page.goto('/');
+  await page.locator('.library-item, li').filter({ hasText: 'Acme Q4' }).first().getByRole('button', { name: /Acme Q4|Open/ }).first().click();
+  await expect(page).toHaveURL(new RegExp(`/review/${CAMPAIGN}$`));
+  await expect(page.getByRole('heading', { name: 'Acme Q4' })).toBeVisible();
+  const tiles = page.getByRole('list', { name: 'Images to review' }).getByRole('listitem');
+  await expect(tiles).toHaveCount(2);
+  await tiles.first().getByRole('button', { name: 'Approve' }).click();
+  await expect(tiles.first().getByRole('button', { name: 'Approve' })).toHaveAttribute('aria-pressed', 'true');
+  await expect.poll(() => reviewPosts(fake)).toEqual([expect.objectContaining({ campaign_id: CAMPAIGN, status: 'approved' })]);
+  expect(errors).toEqual([]);
+});

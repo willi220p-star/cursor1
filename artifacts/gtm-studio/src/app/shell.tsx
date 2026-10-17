@@ -112,7 +112,8 @@ export function Shell({ children, user }: { children: ReactNode; user: User }) {
               <kbd className="hidden lg:inline">⌘K</kbd>
             </button>
             {supabaseConfigured && <NotificationBell />}
-            <ThemeButton />
+            {/* On phones the theme lives in Settings, leaving room for the bell. */}
+            <span className="hidden sm:inline-flex"><ThemeButton /></span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="avatar-btn" aria-label={`Account menu for ${email}`}>{initials}</button>

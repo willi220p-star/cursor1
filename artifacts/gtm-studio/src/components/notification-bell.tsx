@@ -133,7 +133,7 @@ export function NotificationBell() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="btn btn-ghost btn-icon relative"
+          className="round-btn relative"
           aria-label={count ? `Notifications, ${count} unread` : 'Notifications'}
           data-testid="notification-bell"
         >
