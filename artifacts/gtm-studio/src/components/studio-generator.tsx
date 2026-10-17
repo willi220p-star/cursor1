@@ -3391,6 +3391,7 @@ export function StudioGenerator({
                 onRetry={retryAsset}
                 onDelete={(asset) => void deleteAsset(asset)}
                 zipping={zipping}
+                campaignId={supabaseConfigured && userId ? config.id : undefined}
               />
             ) : (
               <p className="helper">Generate first, then every image for this studio appears here.</p>
