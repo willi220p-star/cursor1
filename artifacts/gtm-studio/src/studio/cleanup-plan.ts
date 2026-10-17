@@ -66,8 +66,10 @@ export type CleanupPlan = {
 };
 
 export type CleanupOptions = {
-  /** Paths must start with `${userId}/` to be removed. */
+  /** Paths must start with `${userId}/` (legacy uploads) or `spaces/${spaceId}/` to be removed. */
   userId?: string;
+  /** The campaign's team space; its `spaces/<id>/` folder counts as the campaign's own storage. */
+  spaceId?: string | null;
   /** Other campaigns' lists: anything they link to is kept too. */
   otherCampaigns?: Array<{ id: string; contacts: Contact[] | null | undefined }>;
   /** Object sizes from storage.list, keyed by storage path. */
@@ -161,15 +163,23 @@ export function stampedPaths(campaign: CleanupCampaign) {
 /** Reserved first-level folders under the user's folder that only hold non-generated files. */
 const RESERVED_FOLDERS = new Set(['lists', 'uploads', 'carousels']);
 
-function isRemovableGenerated(row: CleanupAssetRow, campaignId: string, path: string, userId?: string) {
+/** How many leading path segments are the owner's root folder (1 legacy, 2 space), or 0 if neither. */
+export function ownedRootDepth(path: string, userId?: string, spaceId?: string | null) {
+  if (spaceId && path.startsWith(`spaces/${spaceId}/`)) return 2;
+  if (!userId || path.startsWith(`${userId}/`)) return 1;
+  return 0;
+}
+
+function isRemovableGenerated(row: CleanupAssetRow, campaignId: string, path: string, userId?: string, spaceId?: string | null) {
   if (!campaignId || row.campaign_id !== campaignId) return false;
   const meta = metadataOf(row);
   if (meta.role !== 'generated') return false;
   if (meta.kind === 'list' || meta.kind === 'carousel') return false;
-  if (userId && !path.startsWith(`${userId}/`)) return false;
+  const depth = ownedRootDepth(path, userId, spaceId);
+  if (!depth) return false;
   const segments = path.split('/');
-  if (segments.length < 3) return false;
-  if (RESERVED_FOLDERS.has(segments[1])) return false;
+  if (segments.length < depth + 2) return false;
+  if (RESERVED_FOLDERS.has(segments[depth])) return false;
   return true;
 }
 
@@ -183,7 +193,7 @@ export function displayName(path: string, filename?: string | null) {
 }
 
 export function planCleanup(campaign: CleanupCampaign, assetRows: CleanupAssetRow[], options: CleanupOptions = {}): CleanupPlan {
-  const { userId, otherCampaigns = [], sizes } = options;
+  const { userId, spaceId, otherCampaigns = [], sizes } = options;
   const empty = (refused?: string): CleanupPlan => ({ keep: [], remove: [], bytes: 0, unknownSizes: 0, ...(refused ? { refused } : {}) });
   if (!campaign?.id) return empty('Save this campaign to Supabase before cleaning up its files.');
 
@@ -202,7 +212,7 @@ export function planCleanup(campaign: CleanupCampaign, assetRows: CleanupAssetRo
   const candidates = new Map<string, Candidate>();
   for (const row of assetRows) {
     const path = rowPath(row);
-    if (!path || !isRemovableGenerated(row, campaign.id, path, userId)) continue;
+    if (!path || !isRemovableGenerated(row, campaign.id, path, userId, spaceId)) continue;
     const entry = candidates.get(path) ?? { path, rows: [] };
     entry.rows.push(row);
     candidates.set(path, entry);

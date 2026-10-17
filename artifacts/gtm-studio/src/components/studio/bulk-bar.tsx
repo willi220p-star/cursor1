@@ -97,7 +97,7 @@ export function BulkBar({
   const moveBlocked = editBlocked ?? (oneSpace === undefined ? 'The selected items are in different client spaces. Select items from one space to move them to a folder.' : null);
   const liveSpaces = spaces.filter((space) => !space.archived_at);
 
-  const statusAction: BulkAction = { kind: 'update', patch: { status: 'draft' } };
+  const statusAction: BulkAction = { kind: 'update', patch: { status: 'generated' } };
   const spaceAction: BulkAction = { kind: 'move', folderId: null, spaceId: liveSpaces[0]?.id ?? 'any' };
   const moveAction: BulkAction = { kind: 'move', folderId: null };
 
@@ -178,7 +178,8 @@ export function BulkBar({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-44 border-border bg-card">
               <DropdownMenuLabel className="text-xs text-muted-foreground">Set campaign status</DropdownMenuLabel>
-              {(Object.keys(statusLabels) as CampaignStatus[]).map((status) => (
+              {/* Draft only means "nothing has happened yet", so it can't be set. */}
+              {(Object.keys(statusLabels) as CampaignStatus[]).filter((status) => status !== 'draft').map((status) => (
                 <DropdownMenuItem key={status} className="min-h-11" onSelect={() => onRun({ kind: 'update', patch: { status } })}>
                   {statusLabels[status]}
                 </DropdownMenuItem>

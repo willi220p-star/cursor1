@@ -4,7 +4,7 @@
  * later. Errors are AppErrors with plain-English messages, ready to show inline.
  * Pure logic lives in review-logic.ts.
  */
-import { appError, toAppError } from '@/lib/app-error';
+import { appError, isAppError, toAppError } from '@/lib/app-error';
 import { enqueue, isOnline, registerQueueHandler } from '@/lib/offline-queue';
 import { unwrap, withRetry } from '@/lib/retry';
 import { supabase } from './cloud';
@@ -139,7 +139,14 @@ async function insertReview(row: QueuedReview): Promise<Review> {
 }
 
 registerQueueHandler('review', async (payload) => {
-  await insertReview(payload as QueuedReview);
+  try {
+    await insertReview(payload as QueuedReview);
+  } catch (error) {
+    // The row id is fixed when the review is made, so a replay of a review that already landed is a duplicate: done.
+    const cause = isAppError(error) ? error.cause : error;
+    if ((cause as { code?: string } | null)?.code === '23505') return;
+    throw error;
+  }
 });
 
 /**
