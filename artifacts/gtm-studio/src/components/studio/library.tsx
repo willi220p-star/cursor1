@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ArrowUpDown, Copy, Database, Eraser, FileText, Folder, FolderInput, FolderPlus, History, MoreHorizontal, Pencil, Search, Tag, Trash2 } from 'lucide-react';
+import { BulkBar, type BulkFolder, type BulkItem } from '@/components/studio/bulk-bar';
+import { TrashView } from '@/components/studio/trash-view';
 import { Link, useLocation } from 'wouter';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -25,6 +27,21 @@ import {
   statusLabels,
 } from '@/studio/campaign-status';
 import { reportError } from '@/lib/report';
+import { useAccess } from '@/studio/access-context';
+import { entityForKind, onBulkApplied, runBulk, trashWithUndo, type RenameContext } from '@/studio/bulk';
+import type { BulkAction, BulkResult, LibraryEntity } from '@/studio/contracts';
+import {
+  clear as clearSelection,
+  clickSelect,
+  deselectAll,
+  emptySelection,
+  headerState,
+  prune,
+  selectAll,
+  selectionShortcut,
+  type Selection,
+} from '@/studio/selection';
+import { downloadZip } from '@/studio/zip-download';
 import { formatBytes } from '@/studio/cleanup-plan';
 import { prepareCampaignCleanup, runCampaignCleanup, type CleanupResult, type PreparedCleanup } from '@/studio/cleanup';
 import {
@@ -38,7 +55,6 @@ import {
   moveStoredFile,
   moveTemplateConfig,
   removeCampaign,
-  removeFileFolder,
   removeStoredFile,
   removeTemplateConfig,
   renameCampaign,
@@ -65,7 +81,7 @@ type NameRequest =
   | { kind: 'rename-campaign'; campaign: SavedCampaign }
   | { kind: 'set-client'; campaign: SavedCampaign };
 
-type KindFilter = 'all' | LibraryItem['kind'];
+type KindFilter = 'all' | LibraryItem['kind'] | 'trash';
 
 type CleanupRequest = {
   campaign: SavedCampaign;
@@ -104,7 +120,11 @@ const kindFilters: Array<{ value: KindFilter; label: string }> = [
   { value: 'campaign', label: 'Campaigns' },
   { value: 'template', label: 'Templates' },
   { value: 'file', label: 'Files' },
+  { value: 'trash', label: 'Trash' },
 ];
+
+/** Rows drawn at once; "Show more" draws the next batch. "Select all N matching" covers every row. */
+export const RENDER_STEP = 100;
 
 function itemMode(item: LibraryItem): StudioMode | null {
   if (item.kind === 'template') return item.template.mode;
@@ -121,13 +141,44 @@ function itemDetail(item: LibraryItem) {
   return item.file.label;
 }
 
-/** How long a deleted item can be brought back before it is really deleted. */
-export const UNDO_DELETE_MS = 10_000;
-
 const ALL_CLIENTS = '__all';
 const NO_CLIENT = '__none';
 
 const itemKey = (item: Pick<LibraryItem, 'kind' | 'id'>) => `${item.kind}-${item.id}`;
+
+/** Fields the team-spaces migration adds; read loosely so rows saved before it still work. */
+type SpaceFields = { spaceId?: string | null; version?: number; tags?: string[] };
+
+function itemSource(item: LibraryItem): SpaceFields {
+  return (item.kind === 'template' ? item.template : item.kind === 'campaign' ? item.campaign : item.file) as SpaceFields;
+}
+
+/** Templates are team-wide; other rows carry the client space they live in (null before the migration). */
+function itemSpaceId(item: LibraryItem): string | null {
+  return item.kind === 'template' ? null : itemSource(item).spaceId ?? null;
+}
+
+/** Only rows saved in Supabase can go to Trash; local-only drafts are deleted straight away. */
+function inCloud(item: LibraryItem) {
+  if (item.kind === 'template') return Boolean(item.template.cloud);
+  if (item.kind === 'campaign') return Boolean(item.campaign.cloud);
+  return true;
+}
+
+function bulkItem(item: LibraryItem): BulkItem {
+  const source = itemSource(item);
+  return {
+    key: itemKey(item),
+    entity: entityForKind(item.kind),
+    id: item.id,
+    name: item.name,
+    version: source.version,
+    spaceId: itemSpaceId(item),
+    folderId: item.folderId,
+    client: item.kind === 'campaign' ? campaignClient(item.campaign) : undefined,
+    tags: item.kind === 'campaign' ? source.tags : undefined,
+  };
+}
 
 function removeItem(item: LibraryItem, userId?: string) {
   if (item.kind === 'template') return removeTemplateConfig(item.template, userId);
@@ -166,15 +217,15 @@ export function Library({
   const [kind, setKind] = useState<KindFilter>('all');
   const [clientFilter, setClientFilter] = useState(ALL_CLIENTS);
   const [cleanup, setCleanup] = useState<CleanupRequest | null>(null);
-  // Deletes wait UNDO_DELETE_MS so they can be undone; these rows are hidden meanwhile.
-  const [pendingKeys, setPendingKeys] = useState<string[]>([]);
-  const pendingDeletes = useRef(new Map<string, { item: LibraryItem; timer: number; toastId: string | number }>());
+  const [selection, setSelection] = useState<Selection>(emptySelection);
+  const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const headerBox = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
-  const userIdRef = useRef(userId);
-  userIdRef.current = userId;
   const [, navigate] = useLocation();
+  const { can, currentSpaceId, spaces } = useAccess();
 
   const [loadFailed, setLoadFailed] = useState<string[]>([]);
   const load = () => {
@@ -255,7 +306,7 @@ export function Library({
   }, [items]);
 
   const needle = query.trim().toLowerCase();
-  const liveItems = items.filter((item) => !pendingKeys.includes(itemKey(item)));
+  const liveItems = items;
   const clientItems = clientFilter === ALL_CLIENTS
     ? liveItems
     : liveItems.filter((item) => item.kind === 'campaign' && (clientFilter === NO_CLIENT ? !campaignClient(item.campaign) : campaignClient(item.campaign) === clientFilter));
@@ -266,7 +317,29 @@ export function Library({
     if (clientFilter !== ALL_CLIENTS) return true;
     return openFolder ? item.folderId === openFolder.id : !item.folderId;
   });
-  const kindCount = (value: KindFilter) => (value === 'all' ? clientItems.length : clientItems.filter((item) => item.kind === value).length);
+  const kindCount = (value: KindFilter) => (value === 'trash' ? '' : value === 'all' ? clientItems.length : clientItems.filter((item) => item.kind === value).length);
+  const inTrash = kind === 'trash';
+
+  // Selection: survives filtering and folder changes, drops rows that are gone, clears on space change.
+  const renderedItems = visibleItems.slice(0, renderLimit);
+  const renderedKeys = renderedItems.map(itemKey);
+  const matchingKeys = visibleItems.map(itemKey);
+  const allKeys = useMemo(() => items.map(itemKey), [items]);
+  useEffect(() => {
+    if (loaded) setSelection((current) => prune(current, allKeys));
+  }, [allKeys, loaded]);
+  useEffect(() => setSelection(clearSelection()), [currentSpaceId]);
+  useEffect(() => setRenderLimit(RENDER_STEP), [needle, kind, clientFilter, openId]);
+  const selectedItems = items.filter((item) => selection.keys.has(itemKey(item)));
+  const anySelected = selectedItems.length > 0;
+  const header = headerState(selection, renderedKeys);
+  const allMatchingSelected = matchingKeys.length > 0 && matchingKeys.every((key) => selection.keys.has(key));
+  useEffect(() => {
+    if (headerBox.current) headerBox.current.indeterminate = header === 'some';
+  });
+
+  // A bulk action replayed from the offline queue refreshes the Library too.
+  useEffect(() => onBulkApplied(() => onChangedRef.current()), []);
   const folderCount = (folderId: string) => liveItems.filter((item) => item.folderId === folderId).length;
   const libraryEmpty = loaded && items.length === 0 && (folders?.length ?? 0) === 0;
 
@@ -315,66 +388,111 @@ export function Library({
     }
   };
 
-  /** Runs a waiting delete now. Also used when the Library goes away, so no delete is lost. */
-  const commitDelete = (key: string) => {
-    const entry = pendingDeletes.current.get(key);
-    if (!entry) return;
-    pendingDeletes.current.delete(key);
-    window.clearTimeout(entry.timer);
-    toast.dismiss(entry.toastId);
-    const { item } = entry;
-    const fail = (description: string) => {
-      toast.error(`Could not delete ${item.name}`, { description });
-      if (mounted.current) setPendingKeys((current) => current.filter((value) => value !== key));
-    };
-    void removeItem(item, userIdRef.current)
-      .then((result) => {
-        if (result.syncError) fail(result.syncError);
-      })
-      .catch((error) => {
-        reportError(error, { area: 'library', action: 'delete' });
-        fail(error instanceof Error ? error.message : 'The delete did not go through.');
-      })
-      .finally(() => {
-        if (mounted.current) onChangedRef.current();
-      });
-  };
-
-  const undoDelete = (key: string) => {
-    const entry = pendingDeletes.current.get(key);
-    if (!entry) return;
-    pendingDeletes.current.delete(key);
-    window.clearTimeout(entry.timer);
-    setPendingKeys((current) => current.filter((value) => value !== key));
-    toast.success(`${entry.item.name} restored`);
-  };
-
+  /** Delete goes to Trash ("Moved to Trash · Undo"). Local-only drafts have no Trash and go at once. */
   const deleteItem = (item: LibraryItem) => {
-    const key = itemKey(item);
-    if (busyId || pendingDeletes.current.has(key)) return;
-    const what = item.kind === 'campaign' ? 'Campaign and its stored files' : item.kind === 'template' ? 'Template' : 'File';
-    const toastId = toast(`${item.name} deleted`, {
-      description: `${what} will be removed from Supabase in ${UNDO_DELETE_MS / 1000} seconds.`,
-      duration: UNDO_DELETE_MS,
-      action: { label: 'Undo', onClick: () => undoDelete(key) },
-    });
-    const timer = window.setTimeout(() => commitDelete(key), UNDO_DELETE_MS);
-    pendingDeletes.current.set(key, { item, timer, toastId });
-    setPendingKeys((current) => [...current, key]);
+    if (busyId) return;
+    if (!inCloud(item)) {
+      void removeItem(item, userId)
+        .then((result) => {
+          if (result.syncError) toast.error(`Could not delete ${item.name}`, { description: result.syncError });
+          else toast.success(`${item.name} deleted`);
+        })
+        .catch((error) => {
+          reportError(error, { area: 'library', action: 'delete' });
+          toast.error(`Could not delete ${item.name}`, { description: error instanceof Error ? error.message : undefined });
+        })
+        .finally(() => onChangedRef.current());
+      return;
+    }
+    void trashWithUndo([bulkItem(item)]);
   };
 
-  // Leaving the page (or closing the tab) runs any waiting deletes at once instead of dropping them.
   useEffect(() => {
     mounted.current = true;
-    const flush = () => [...pendingDeletes.current.keys()].forEach((key) => commitDelete(key));
-    window.addEventListener('pagehide', flush);
     return () => {
-      window.removeEventListener('pagehide', flush);
       mounted.current = false;
-      flush();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /** Keeps only the items that failed selected, so they are easy to retry or inspect. */
+  const keepFailed = (result: BulkResult) => {
+    const failed = new Set(result.failed.map((failure) => `${failure.target.entity}:${failure.target.id}`));
+    setSelection((current) => ({
+      keys: new Set([...current.keys].filter((key) => {
+        const item = items.find((candidate) => itemKey(candidate) === key);
+        return item ? failed.has(`${entityForKind(item.kind)}:${item.id}`) : false;
+      })),
+      anchor: null,
+    }));
+  };
+
+  const renameContext = useMemo<RenameContext>(() => {
+    const clientsById: Record<string, string> = {};
+    const taken: Partial<Record<LibraryEntity, string[]>> = {};
+    const spaceNames = new Map(spaces.filter((space) => space.kind === 'client').map((space) => [space.id, space.name]));
+    for (const item of items) {
+      const entity = entityForKind(item.kind);
+      (taken[entity] ??= []).push(item.name);
+      const client = item.kind === 'campaign' ? campaignClient(item.campaign) : '';
+      const spaceId = itemSpaceId(item);
+      clientsById[item.id] = client || (spaceId ? spaceNames.get(spaceId) ?? '' : '');
+    }
+    return { clients: clientsById, taken };
+  }, [items, spaces]);
+
+  const runSelected = async (action: BulkAction) => {
+    if (bulkBusy || !selectedItems.length) return;
+    setBulkBusy(true);
+    try {
+      const result = await runBulk(action, selectedItems.map(bulkItem), { rename: renameContext });
+      keepFailed(result);
+    } catch (error) {
+      reportError(error, { area: 'library', action: `bulk-${action.kind}` });
+      toast.error('That bulk action did not run', { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const trashSelected = async () => {
+    if (bulkBusy || !selectedItems.length) return;
+    setBulkBusy(true);
+    try {
+      const cloud = selectedItems.filter(inCloud);
+      const local = selectedItems.filter((item) => !inCloud(item));
+      for (const item of local) deleteItem(item);
+      if (cloud.length) keepFailed(await trashWithUndo(cloud.map(bulkItem)));
+      else setSelection(clearSelection());
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const downloadSelected = async () => {
+    if (bulkBusy || !selectedItems.length) return;
+    setBulkBusy(true);
+    try {
+      await downloadZip(selectedItems.map(bulkItem));
+    } catch (error) {
+      reportError(error, { area: 'library', action: 'bulk-download' });
+      toast.error('Could not build the ZIP', { description: error instanceof Error ? error.message : undefined });
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
+  const onLibraryKey = (event: KeyboardEvent<HTMLElement>) => {
+    // Keys typed in dialogs (rendered in portals) bubble here through React; only act on the library itself.
+    if (inTrash || !(event.target instanceof Node) || !event.currentTarget.contains(event.target)) return;
+    const shortcut = selectionShortcut(event);
+    if (shortcut === 'clear' && selection.keys.size) {
+      event.preventDefault();
+      setSelection(clearSelection());
+    } else if (shortcut === 'select-visible' && renderedKeys.length) {
+      event.preventDefault();
+      setSelection((current) => selectAll(current, renderedKeys));
+    }
+  };
 
   const duplicateItem = (item: LibraryItem) => {
     if (item.kind !== 'campaign' || busyId) return;
@@ -428,14 +546,11 @@ export function Library({
       });
   };
 
+  /** A folder goes to Trash on its own; what was inside shows in the library until it is restored. */
   const deleteFolder = (folder: FileFolder) => {
     if (busyId) return;
-    if (!window.confirm(`Delete the folder “${folder.name}”? Templates, files, and campaigns inside it go back to the library. Nothing inside is deleted.`)) return;
-    void run(folder.id, async () => {
-      const result = await removeFileFolder(folder.id, userId);
-      if (openId === folder.id) setOpenId(null);
-      return result;
-    }, `${folder.name} deleted`, `Could not delete ${folder.name}`);
+    if (openId === folder.id) setOpenId(null);
+    void trashWithUndo([{ entity: 'folder', id: folder.id, name: folder.name }]);
   };
 
   const moveItem = (item: LibraryItem, folderId: string | null) => {
@@ -483,7 +598,7 @@ export function Library({
   };
 
   return (
-    <section aria-labelledby="library-heading" className="flex flex-col gap-5">
+    <section aria-labelledby="library-heading" className="flex flex-col gap-5 outline-none" tabIndex={-1} onKeyDown={onLibraryKey}>
       <div className="library-head">
         <h2 id="library-heading" className="section-title">Library</h2>
         <label className="search-field">
@@ -500,7 +615,7 @@ export function Library({
             </button>
           ))}
         </div>
-        {(clients.length > 0 || clientFilter !== ALL_CLIENTS) && (
+        {!inTrash && (clients.length > 0 || clientFilter !== ALL_CLIENTS) && (
           <label className="client-filter">
             <span className="sr-only">Client</span>
             <select className="field" value={clientFilter} onChange={(event) => setClientFilter(event.target.value)} aria-label="Filter by client">
@@ -510,11 +625,11 @@ export function Library({
             </select>
           </label>
         )}
-        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSortDesc((value) => !value)} aria-label={sortDesc ? 'Sorted newest first. Show oldest first.' : 'Sorted oldest first. Show newest first.'}>
+        {!inTrash && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSortDesc((value) => !value)} aria-label={sortDesc ? 'Sorted newest first. Show oldest first.' : 'Sorted oldest first. Show newest first.'}>
           <ArrowUpDown size={15} aria-hidden /> {sortDesc ? 'Newest first' : 'Oldest first'}
-        </button>
+        </button>}
       </div>
-      {!needle && clientFilter === ALL_CLIENTS && (
+      {!inTrash && !needle && clientFilter === ALL_CLIENTS && (
         <div className="chip-row" role="group" aria-label="Folders">
           <button type="button" className="chip" aria-pressed={!openFolder} onClick={() => setOpenId(null)}>Library</button>
           {folders?.map((folder) => (
@@ -548,28 +663,73 @@ export function Library({
         </div>
       )}
 
+      {inTrash ? (
+        <TrashView userId={userId} revision={revision} needle={needle} />
+      ) : (
+      <>
+      {loaded && visibleItems.length > 0 && (
+        <div className="-mb-3 flex min-h-11 flex-wrap items-center gap-x-3 gap-y-1 px-1 text-sm" data-select-header>
+          <label className="inline-flex min-h-11 min-w-11 cursor-pointer items-center justify-center gap-2">
+            <input
+              ref={headerBox}
+              type="checkbox"
+              className="size-4 accent-[var(--primary)]"
+              checked={header === 'all'}
+              aria-label={header === 'all' ? 'Clear the visible selection' : 'Select all visible'}
+              onChange={() => setSelection((current) => (header === 'all' ? deselectAll(current, renderedKeys) : selectAll(current, renderedKeys)))}
+            />
+            <span className="font-medium">Select</span>
+          </label>
+          {anySelected && <span className="text-muted-foreground" data-selected-count>{selectedItems.length} selected</span>}
+          {anySelected && !allMatchingSelected && matchingKeys.length > renderedKeys.length && (
+            <button type="button" className="btn btn-ghost btn-sm min-h-11 px-2 underline sm:min-h-9" onClick={() => setSelection((current) => selectAll(current, matchingKeys))}>
+              Select all {matchingKeys.length} matching
+            </button>
+          )}
+        </div>
+      )}
       <div className="max-h-[640px] overflow-y-auto rounded-[20px]">
         {!loaded ? (
           <div className="group-list space-y-3 p-4" aria-busy="true" aria-label="Loading library">
             {[0, 1, 2].map((item) => <div key={item} className="h-11 animate-pulse rounded-[12px] bg-surface-2" />)}
           </div>
         ) : visibleItems.length ? (
+          <>
           <ul className="group-list">
-            {visibleItems.map((item) => {
+            {renderedItems.map((item) => {
               const mode = itemMode(item);
               const status = item.kind === 'campaign' ? campaignStatus(item.campaign.config) : null;
               const history = item.kind === 'campaign' ? recentHistory(item.campaign.config) : [];
               const client = item.kind === 'campaign' ? campaignClient(item.campaign) : '';
+              const key = itemKey(item);
+              const checked = selection.keys.has(key);
               return (
                 <li
-                  key={`${item.kind}-${item.id}`}
-                  className="group-row"
+                  key={key}
+                  className="group group-row"
+                  data-selected={checked || undefined}
                   data-library-kind={item.kind}
                   data-library-id={item.id}
                   data-library-name={item.name}
                   data-storage-path={item.kind === 'file' ? item.file.storagePath : undefined}
                   onClick={() => openItem(item)}
                 >
+                  <label
+                    className={`-ml-2 -mr-2 inline-flex size-11 flex-none cursor-pointer items-center justify-center transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 ${anySelected ? 'opacity-100' : 'opacity-0'}`}
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--primary)]"
+                      checked={checked}
+                      aria-label={`Select ${item.name}`}
+                      onChange={(event) => {
+                        // React fires a checkbox's change from the native click, which carries Shift.
+                        const shift = (event.nativeEvent as MouseEvent).shiftKey === true;
+                        setSelection((current) => clickSelect(current, key, renderedKeys, shift));
+                      }}
+                    />
+                  </label>
                   <span className="item-mark" data-studio={mode ?? 'file'} aria-hidden>
                     {mode ? studioInitial(mode) : <FileText size={18} />}
                   </span>
@@ -641,6 +801,12 @@ export function Library({
               );
             })}
           </ul>
+          {visibleItems.length > renderedItems.length && (
+            <button type="button" className="btn btn-quiet mt-3 w-full" onClick={() => setRenderLimit((value) => value + RENDER_STEP)}>
+              Show {Math.min(RENDER_STEP, visibleItems.length - renderedItems.length)} more of {visibleItems.length - renderedItems.length}
+            </button>
+          )}
+          </>
         ) : libraryEmpty ? (
           <div className="group-list empty-state">
             <Database size={24} className="text-muted-foreground" aria-hidden />
@@ -673,6 +839,23 @@ export function Library({
           </div>
         )}
       </div>
+      {anySelected && (
+        <BulkBar
+          items={selectedItems.map(bulkItem)}
+          folders={(folders ?? []).map((folder): BulkFolder => ({ id: folder.id, name: folder.name, spaceId: (folder as { spaceId?: string | null }).spaceId }))}
+          spaces={spaces}
+          showSpaces={can('members.manage', null) || spaces.length > 1}
+          can={can}
+          busy={bulkBusy}
+          renameContext={renameContext}
+          onRun={(action) => void runSelected(action)}
+          onDownload={() => void downloadSelected()}
+          onTrash={() => void trashSelected()}
+          onClear={() => setSelection(clearSelection())}
+        />
+      )}
+      </>
+      )}
 
       <Dialog open={preview !== null} onOpenChange={(open) => { if (!open) setPreview(null); }}>
         <DialogContent className="max-w-3xl rounded-[12px] border-border bg-card">

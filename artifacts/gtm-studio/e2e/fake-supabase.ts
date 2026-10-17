@@ -18,6 +18,10 @@ export type FakeOptions = {
   storageObjects?: Array<{ path: string; size: number }>;
   /** Let Google Fonts through (default: blocked). For checks that must see a font really draw. */
   allowFonts?: boolean;
+  /** Rows served for GET /rest/v1/outbound_templates. */
+  templates?: Record<string, unknown>[];
+  /** bulk_* RPC rows for these ids come back failed with this code and message. */
+  bulkFailures?: Record<string, { code: string; message: string }>;
 };
 
 /** `table` is the REST table, or `storage:list` / `storage:remove` for bucket calls. */
@@ -38,8 +42,11 @@ function requestBody(request: Request) {
 export async function fakeSupabase(context: BrowserContext, options: FakeOptions = {}) {
   const { signedIn = true, failLists = false, contacts, mode } = options;
   const campaigns = [...(options.campaigns ?? [])];
-  const folders = options.folders ?? [];
+  const folders = [...(options.folders ?? [])];
   const assets = [...(options.assets ?? [])];
+  const templates = [...(options.templates ?? [])];
+  const bulkFailures = new Map(Object.entries(options.bulkFailures ?? {}));
+  const tables: BulkTables = { outbound_campaigns: campaigns, outbound_templates: templates, outbound_assets: assets, outbound_folders: folders };
   const objects = [...(options.storageObjects ?? [])];
   const requests: FakeRequest[] = [];
   await context.route(/supabase\.co/, (route) => {
@@ -72,6 +79,9 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // 500 is not retried by the Supabase client, so the error shows at once.
       if (failLists && method === 'GET') return route.fulfill({ status: 500, json: { message: 'Internal error' } });
       const wantsObject = (request.headers().accept ?? '').includes('vnd.pgrst.object');
+      if (table === 'rpc') return route.fulfill({ json: bulkRpc(url, body, tables, bulkFailures) });
+      if (method === 'GET' && table in tables) return route.fulfill({ json: bulkSelect(url, tables[table as keyof BulkTables], wantsObject) });
+      if (method === 'GET' && table === 'profiles') return route.fulfill({ json: [{ user_id: userId, display_name: 'Operator', email: user.email }] });
       if (table === 'outbound_campaigns') {
         if (method === 'GET') {
           const id = new URL(url).searchParams.get('id')?.replace(/^eq\./, '');
@@ -119,7 +129,7 @@ export async function fakeSupabase(context: BrowserContext, options: FakeOptions
       // Storage blocked; the app still renders signed out.
     }
   }, [signedIn, JSON.stringify(session), mode ? `gtm-contacts:${userId}:${mode}` : '', contacts ? JSON.stringify(contacts) : ''] as const);
-  return { requests, campaigns, assets, objects };
+  return { requests, campaigns, assets, objects, folders, templates, bulkFailures };
 }
 
 /** A saved campaign row as Supabase returns it. */
@@ -152,3 +162,79 @@ export function sampleContacts(count: number) {
     return { row: index + 2, name: `${name} ${index}`, company, role: 'Director', city: 'Darwin', image_link: image, msg: 'Worth a quick chat?' };
   });
 }
+
+// --- bulk RPCs ---
+// Team spaces add Trash (deleted_at) and bulk_* RPCs. Library list reads hide trashed rows unless the
+// query filters deleted_at itself (the Trash view asks for `deleted_at=not.is.null`).
+
+type Row = Record<string, unknown>;
+type BulkTables = { outbound_campaigns: Row[]; outbound_templates: Row[]; outbound_assets: Row[]; outbound_folders: Row[] };
+
+const entityTables: Record<string, keyof BulkTables> = {
+  campaign: 'outbound_campaigns',
+  template: 'outbound_templates',
+  asset: 'outbound_assets',
+  folder: 'outbound_folders',
+};
+
+/** PostgREST filters the app uses on library tables: eq, in, is null, not.is.null. */
+function bulkSelect(url: string, rows: Row[], wantsObject: boolean) {
+  const params = new URL(url).searchParams;
+  let result = rows;
+  const deleted = params.get('deleted_at');
+  if (deleted === 'not.is.null') result = result.filter((row) => row.deleted_at);
+  else result = result.filter((row) => !row.deleted_at);
+  for (const [column, filter] of params) {
+    if (['select', 'order', 'limit', 'offset', 'deleted_at'].includes(column)) continue;
+    // Seeded rows often leave out columns such as user_id; a filter on a column a row lacks lets it through.
+    if (filter.startsWith('eq.')) result = result.filter((row) => row[column] === undefined || String(row[column]) === filter.slice(3));
+    else if (filter.startsWith('in.(')) {
+      const values = filter.slice(4, -1).split(',').map((value) => value.replace(/^"|"$/g, ''));
+      result = result.filter((row) => row[column] === undefined || values.includes(String(row[column])));
+    } else if (filter === 'is.null') result = result.filter((row) => row[column] == null);
+  }
+  if (params.get('order')?.startsWith('deleted_at')) result = [...result].sort((a, b) => String(b.deleted_at).localeCompare(String(a.deleted_at)));
+  return wantsObject ? result[0] ?? null : result;
+}
+
+function bulkRpc(url: string, body: unknown, tables: BulkTables, failures: Map<string, { code: string; message: string }>) {
+  const fn = new URL(url).pathname.split('/rpc/')[1] ?? '';
+  const args = (body ?? {}) as { entity?: string; ids?: string[]; items?: Array<{ id: string; name: string }>; target_folder?: string | null; target_space?: string | null; patch?: { status?: string; tags_add?: string[]; tags_remove?: string[] } };
+  const table = fn === 'bulk_update_campaigns' ? tables.outbound_campaigns : tables[entityTables[args.entity ?? ''] ?? 'outbound_campaigns'];
+  const ids = args.ids ?? (args.items ?? []).map((item) => item.id);
+  const now = new Date().toISOString();
+  return ids.map((id) => {
+    const forced = failures.get(id);
+    if (forced) return { id, ok: false, error_code: forced.code, message: forced.message };
+    const index = table.findIndex((row) => row.id === id);
+    const row = table[index];
+    if (!row) return { id, ok: false, error_code: 'not_found', message: 'This item no longer exists.' };
+    let message: string | null = null;
+    if (fn === 'bulk_trash') Object.assign(row, { deleted_at: now, deleted_by: userId });
+    else if (fn === 'bulk_restore') Object.assign(row, { deleted_at: null, deleted_by: null });
+    else if (fn === 'bulk_move') Object.assign(row, { folder_id: args.target_folder ?? null }, args.target_space ? { space_id: args.target_space } : {});
+    else if (fn === 'bulk_rename') {
+      const name = args.items?.find((item) => item.id === id)?.name ?? '';
+      if (args.entity === 'asset') row.filename = name;
+      else row.name = name;
+      if (row.config && typeof row.config === 'object') row.config = { ...(row.config as Row), campaignName: name };
+    } else if (fn === 'bulk_update_campaigns') {
+      const tags = new Set([...((row.tags as string[] | undefined) ?? []), ...(args.patch?.tags_add ?? [])]);
+      for (const tag of args.patch?.tags_remove ?? []) tags.delete(tag);
+      row.tags = [...tags];
+      if (args.patch?.status) {
+        const config = (row.config ?? {}) as Row;
+        row.config = { ...config, history: [...((config.history as unknown[]) ?? []), { at: now, kind: args.patch.status, rows: 0 }] };
+      }
+    } else if (fn === 'bulk_purge') {
+      if (!row.deleted_at) return { id, ok: false, error_code: 'validation', message: 'Only items in Trash can be deleted forever.' };
+      table.splice(index, 1);
+      const paths = args.entity === 'asset' ? [row.storage_path] : args.entity === 'campaign' ? tables.outbound_assets.filter((asset) => asset.campaign_id === id).map((asset) => asset.storage_path) : [];
+      // Like the real RPC: rows go, storage objects stay for the client to remove.
+      message = JSON.stringify(paths.filter(Boolean));
+    }
+    if (fn !== 'bulk_purge') row.version = Number(row.version ?? 1) + 1;
+    return { id, ok: true, error_code: null, message };
+  });
+}
+// --- end bulk RPCs ---
