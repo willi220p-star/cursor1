@@ -226,7 +226,7 @@ export function notificationLabel(
 /** Localstorage key the bell writes so the Desk can open that campaign's review. */
 export const OPEN_REVIEW_KEY = 'gtm-studio-open-review';
 
-/** Where a notification click goes: the Desk, with the campaign in the query string. */
+/** Where a notification click goes: the campaign's review page. */
 export function reviewHref(campaignId: string) {
-  return `/?campaign=${encodeURIComponent(campaignId)}`;
+  return `/review/${encodeURIComponent(campaignId)}`;
 }

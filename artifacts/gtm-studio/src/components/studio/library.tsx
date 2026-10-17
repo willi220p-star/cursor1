@@ -66,6 +66,7 @@ import {
   type StoredFile,
 } from '@/studio/cloud';
 import { studioInfo, studioInitial } from '@/studio/studios';
+import { CampaignReviewBadge } from '@/components/studio/campaign-review-badge';
 import type { SavedCampaign, SavedTemplate, StudioMode } from '@/studio/types';
 
 type LibraryItem =
@@ -745,6 +746,7 @@ export function Library({
                           {statusLabels[status]}
                         </span>
                       )}
+                      {item.kind === 'campaign' && item.campaign.cloud && <CampaignReviewBadge campaignId={item.id} />}
                     </span>
                     <small>{client && <><span className="client-tag">{client}</span> · </>}{itemDetail(item)}</small>
                   </span>

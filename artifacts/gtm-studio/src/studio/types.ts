@@ -560,6 +560,8 @@ export type SavedTemplate = {
   updatedAt: string;
   cloud: boolean;
   folderId?: string | null;
+  /** Row version for conflict protection (cloud rows only). */
+  version?: number;
 };
 
 export type GeneratedAsset = {
@@ -594,4 +596,8 @@ export type SavedCampaign = {
   cloud: boolean;
   syncError?: string;
   folderId?: string | null;
+  /** The space the campaign lives in (cloud rows only). */
+  spaceId?: string;
+  /** Row version for conflict protection (cloud rows only). */
+  version?: number;
 };

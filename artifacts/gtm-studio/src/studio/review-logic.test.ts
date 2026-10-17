@@ -175,6 +175,6 @@ describe('notifications', () => {
   });
 
   it('links to the Desk with the campaign in the query', () => {
-    expect(reviewHref('c 1')).toBe('/?campaign=c%201');
+    expect(reviewHref('c 1')).toBe('/review/c%201');
   });
 });

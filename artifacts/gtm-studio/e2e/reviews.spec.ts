@@ -151,9 +151,7 @@ test('Bell shows unread from a seeded notification and Mark all read clears it',
   });
   await page.goto('/');
   const bell = page.getByTestId('notification-bell');
-  // The lead mounts <NotificationBell /> in the nav on merge; until then this check has nothing to open.
-  const mounted = await bell.waitFor({ timeout: 5000 }).then(() => true, () => false);
-  test.skip(!mounted, 'NotificationBell is not mounted in the nav yet');
+  await expect(bell).toBeVisible();
   await expect(page.getByTestId('notification-count')).toHaveText('2');
   await bell.click();
   await expect(page.getByTestId('notification-item')).toHaveCount(1);
@@ -171,7 +169,7 @@ test('Bell shows unread from a seeded notification and Mark all read clears it',
 
   // Opening it marks it read and hands the campaign to the Desk.
   await page.getByTestId('notification-item').filter({ hasText: 'Sam commented on Acme Q4' }).click();
-  await expect(page).toHaveURL(new RegExp(`\\?campaign=${CAMPAIGN}$`));
+  await expect(page).toHaveURL(new RegExp(`/review/${CAMPAIGN}$`));
   expect(await page.evaluate(() => localStorage.getItem('gtm-studio-open-review'))).toBe(CAMPAIGN);
   await expect(page.getByTestId('notification-count')).toHaveCount(0);
   await expect.poll(() => fake.reviewTables!.notifications.find((row) => row.id === 'n3')?.read_at).toBeTruthy();
