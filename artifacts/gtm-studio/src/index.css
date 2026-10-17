@@ -313,7 +313,8 @@ input[type='checkbox'] { width: 20px; height: 20px; accent-color: var(--primary)
 .brand-lockup { display: inline-flex; align-items: baseline; gap: 10px; color: var(--foreground); text-decoration: none; white-space: nowrap; }
 @media (max-width: 639px) { .brand-lockup { align-items: center; min-height: 44px; } }
 /* The sync pill needs the room on phones; the DGK mark still names the app. */
-@media (max-width: 479px) { .topnav:has([data-testid='sync-status-pill']) .brand-name { display: none; } }
+/* On small phones the DGK mark is enough: the full name plus six buttons overflowed with wider fallback fonts. */
+@media (max-width: 479px) { .brand-lockup .brand-name { display: none; } }
 .brand-lockup .brand-mark { font-family: var(--app-font-display); font-size: 22px; font-weight: 700; letter-spacing: -.02em; }
 .brand-lockup .brand-name { color: var(--muted-foreground); font-size: 14px; }
 .studio-tabs { display: none; flex: 1 1 auto; justify-content: center; gap: 2px; min-width: 0; }
